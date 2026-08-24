@@ -1,0 +1,1 @@
+Current repository bootstrap includes protocol, canonical evidence hashing, NKN MultiClient adapter, quorum coordinator/auditor, independent market API worker paths, tests, CI, and strict review documentation. Live NKN connectivity remains unverified in this environment.
