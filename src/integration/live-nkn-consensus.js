@@ -9,7 +9,8 @@ import { createRequest, createResponse, parseEnvelope, BoundedTtlSet } from '../
 const SYMBOL = 'NKNUSDT';
 const ROUNDS = Number(process.env.NKN_INTEGRATION_ROUNDS ?? 6);
 const RTT_SAMPLES = Number(process.env.NKN_RTT_SAMPLES ?? 20);
-const TOLERANCE = Number(process.env.NKN_PRICE_TOLERANCE ?? 0.20);
+const TOLERANCE = Number(process.env.NKN_PRICE_TOLERANCE ?? 0.05);
+const MAX_OBSERVATION_AGE_MS = Number(process.env.NKN_MAX_OBSERVATION_AGE_MS ?? 10_000);
 const RESPONSE_TIMEOUT_MS = Number(process.env.NKN_RESPONSE_TIMEOUT_MS ?? 7000);
 
 function percentile(values, p) {
@@ -23,9 +24,19 @@ function digest(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-function quorumDecision(observations) {
-  const valid = observations.filter((o) => Number.isFinite(o.price) && o.price > 0);
-  if (valid.length < 2) return { quorum: false, reason: 'fewer-than-two-valid-observations' };
+function quorumDecision(observations, now = Date.now()) {
+  const valid = observations.filter((o) => (
+    Number.isFinite(o.price) &&
+    o.price > 0 &&
+    Number.isInteger(o.capturedAt) &&
+    now - o.capturedAt <= MAX_OBSERVATION_AGE_MS
+  ));
+  const stale = observations
+    .filter((o) => Number.isInteger(o.capturedAt) && now - o.capturedAt > MAX_OBSERVATION_AGE_MS)
+    .map((o) => o.source);
+  const invalid = observations.filter((o) => !valid.includes(o) && !stale.includes(o.source) && o.source).map((o) => o.source);
+
+  if (valid.length < 2) return { quorum: false, reason: 'fewer-than-two-fresh-valid-observations', stale, invalid };
 
   const groups = [];
   for (const item of valid) {
@@ -39,7 +50,7 @@ function quorumDecision(observations) {
 
   groups.sort((a, b) => b.members.length - a.members.length);
   const winner = groups[0];
-  if (winner.members.length < 2) return { quorum: false, reason: 'no-two-source-price-agreement', groups };
+  if (winner.members.length < 2) return { quorum: false, reason: 'no-two-source-price-agreement', groups, stale, invalid };
 
   return {
     quorum: true,
@@ -47,6 +58,8 @@ function quorumDecision(observations) {
     price: Number((winner.members.reduce((sum, item) => sum + item.price, 0) / winner.members.length).toFixed(8)),
     sources: winner.members.map((item) => item.source),
     outliers: valid.filter((item) => !winner.members.includes(item)).map((item) => item.source),
+    stale,
+    invalid,
     groups,
   };
 }
@@ -85,8 +98,7 @@ async function observeFromSource(source) {
   }
 
   if (source === 'adversary') {
-    const base = await observeFromSource('coingecko');
-    return { ...base, source, venue: 'Byzantine-Injected', price: Number((base.price * 1.50).toPrecision(8)) };
+    return { source, venue: 'Byzantine-Injected', price: 0.12345678, capturedAt: Date.now() };
   }
 
   throw new Error(`unknown source ${source}`);
@@ -235,13 +247,15 @@ async function main() {
 
       const decision = quorumDecision(observations);
       metrics.consensusRounds.push({ round, observations, decision });
-      console.log(JSON.stringify({ phase: 'consensus', round, decision, observations: observations.map((o) => ({ source: o.source, venue: o.venue, price: o.price, elapsed: o.elapsed, error: o.error })) }));
+      console.log(JSON.stringify({ phase: 'consensus', round, decision, observations: observations.map((o) => ({ source: o.source, venue: o.venue, price: o.price, capturedAt: o.capturedAt, elapsed: o.elapsed, error: o.error })) }));
 
       if (round <= 3) {
         assert.equal(decision.quorum, true, `expected quorum in round ${round}`);
         assert.ok(decision.sources.filter((source) => honestSources.has(source)).length >= 2, `honest quorum required in round ${round}`);
-        assert.ok(decision.outliers.includes('adversary'), `adversary should be rejected in round ${round}`);
-        metrics.resilience.adversaryRejected = true;
+        if (observations.some((o) => o.source === 'adversary' && Number.isFinite(o.price))) {
+          assert.ok(decision.outliers.includes('adversary'), `adversary should be rejected in round ${round}`);
+          metrics.resilience.adversaryRejected = true;
+        }
       }
 
       if (round === 3) await workerBySource.get('adversary').transport.close();
@@ -277,6 +291,7 @@ async function main() {
       timestamp: new Date().toISOString(),
       symbol: SYMBOL,
       tolerance: TOLERANCE,
+      maxObservationAgeMs: MAX_OBSERVATION_AGE_MS,
       rounds: metrics.consensusRounds.length,
       protocol: metrics.protocol,
       resilience: metrics.resilience,
