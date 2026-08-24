@@ -1,91 +1,142 @@
 # NKN Verifiable Agent Network
 
-A research-grade distributed-agent POC built on the official NKN JavaScript SDK. The project is not a generic agent marketplace: its core primitive is **verifiable independent execution**.
+Research-grade open-source protocol POC for **verifiable independent agent execution over NKN**.
 
-## Core idea
+[![CI](https://github.com/dacosta17/nkn-agent-fabric/actions/workflows/ci.yml/badge.svg)](https://github.com/dacosta17/nkn-agent-fabric/actions/workflows/ci.yml)
 
-```text
-Task
-  ↓
-Discover capable agents
-  ↓
-NKN execution fabric
-  ↓
-Independent evidence / attestations
-  ↓
-Deterministic domain validator
-  ↓
-Quorum + Byzantine rejection
-  ↓
-Verified result
-  ↓
-Reputation / eventual payment
-```
+> **Thesis:** NKN is the transport/addressability layer; this project adds an application-level verification layer so independent agents can produce signed evidence, satisfy deterministic domain policies, reach quorum, and reject Byzantine or low-quality providers.
 
-NKN already has public AI-agent messaging examples, so the differentiator here is not A2A messaging itself. The project asks whether NKN can carry a permissionless, cross-operator **verification layer for agent work**, where an answer/action is accepted only when it satisfies an explicit domain policy and evidence requirements.
+This is deliberately **not** an agent marketplace, trading bot, price-pump system, or autonomous wallet executor.
 
-## Five domain families
+## Why this project exists
 
-### 1. Intelligence
-Multiple agents independently answer a research question and attach source evidence. The result is accepted only when independent evidence reaches quorum.
+NKN already has public examples for P2P messaging, remote connectivity, file transfer, and AI-agent messaging. The interesting question here is one layer above transport:
 
-### 2. Security
-Independent agents assess the same target. A critical finding blocks approval; severity and finding provenance remain part of the signed evidence.
+> Can independent agents operated by different parties execute the same task, return portable evidence, and produce a verifiable result without trusting a single agent or upstream source?
 
-### 3. Infrastructure
-Agents from separate observation points assess service health. The result requires an availability quorum and reports median latency instead of trusting one probe.
+The current implementation tests that thesis over the official `nkn-sdk` MultiClient transport.
 
-### 4. DeFi
-Independent risk agents evaluate a proposed action. The deterministic policy rejects any provider denial or a median risk score above the configured threshold. No wallet execution is performed by the demo.
+## Five task domains
 
-### 5. Automation
-Independent policy agents approve or reject an action against an exact policy version. A mismatched policy version invalidates the result, preventing stale-policy execution.
+**Intelligence** — independent research agents provide source-backed observations; weak or non-quorum evidence is rejected.
 
-All five use the same task/attestation/provenance primitives; only the deterministic domain validator changes.
+**Security** — independent assessments are combined with a critical-finding veto and signed finding provenance.
+
+**Infrastructure** — independent observers report availability and latency; acceptance requires a health quorum.
+
+**DeFi** — independent risk agents evaluate a proposed action before execution. The current POC deliberately stops at risk verification and does not sign or broadcast transactions.
+
+**Automation** — independent policy agents approve an action against an exact policy version, preventing stale-policy execution.
+
+All five domains reuse the same capability, quote, attestation, provenance, freshness, and deterministic-verification primitives.
 
 ## Architecture
 
 ```text
-                           NKN overlay
-                                │
-            ┌───────────────────┼───────────────────┐
-            │                   │                   │
-       Agent operator A    Agent operator B    Agent operator C
-            │                   │                   │
-        capability          capability          capability
-        + quote             + quote             + quote
-            │                   │                   │
-            └──────────── signed execution ────────┘
-                                │
-                         Verification layer
-                                │
-             ┌──────────────────┼──────────────────┐
-             │                  │                  │
-        Intelligence         Security          Infra/DeFi/Automation
-             │                  │                  │
-             └──────────────────┴──────────────────┘
-                                │
-                         verified result
+                 Task
+                   │
+             capability discovery
+                   │
+        ┌──────────┼───────────┐
+        ▼          ▼           ▼
+     Agent A    Agent B     Agent C ...
+        │          │           │
+        └────── NKN overlay ───┘
+                   │
+          signed evidence
+                   │
+       independent providers
+         + operator diversity
+                   │
+       deterministic validator
+                   │
+      quorum / Byzantine rejection
+                   │
+           verified result
+                   │
+       reputation / future settlement
 ```
 
-## Verification layers
+## What is actually tested
 
-- signed capability manifests bound to NKN addresses
-- signed task quotes
-- signed execution attestations
-- task/result SHA-256 provenance
-- freshness and replay protection
-- deterministic domain validators
-- independent-provider quorum
-- Byzantine/outlier rejection
-- reputation updates
-- NKN packet/session transport tests
-- fault injection and negative assertions
+- NKN packet-mode request/reply;
+- NKN session-mode smoke path;
+- signed capability manifests bound to NKN addresses;
+- signed task quotes and execution attestations;
+- SHA-256 task/result evidence digests;
+- freshness and bounded replay protection;
+- independent-provider and operator-diversity checks;
+- Byzantine/outlier rejection;
+- failure injection and explicit quorum-failure assertions;
+- p50/p95/p99 NKN RTT measurement;
+- centralized localhost HTTP lower-bound baseline;
+- deterministic domain matrix with positive and negative cases.
 
-## What this is not
+## Quick start
 
-It is not a trading bot, price-pump mechanism, fake-traction system, or autonomous wallet executor. The DeFi layer currently stops at **risk verification** and deliberately does not execute transactions.
+Requirements: Node.js 22+ (Node 24 is used by CI).
+
+```bash
+npm install
+npm run check
+npm test
+npm run test:domains
+```
+
+Run the live NKN integration from a network-enabled environment:
+
+```bash
+npm run integration:nkn
+```
+
+Run the attested market-data example:
+
+```bash
+npm run integration:market
+```
+
+The live tests use public endpoints. Provider rate limits are treated as provider conditions, not as evidence that NKN itself failed.
+
+## Evidence and security model
+
+A signature proves **who made a claim**. It does not prove the claim is true.
+
+The application therefore separates:
+
+1. NKN transport authenticity/encryption;
+2. application identity signatures;
+3. external evidence provenance;
+4. freshness and replay checks;
+5. deterministic domain policy;
+6. quorum and diversity requirements.
+
+See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+
+## Public benchmark standard
+
+The current localhost comparison is intentionally only a lower bound. A serious performance paper should compare NKN against a centralized multi-region transport under identical topology, payloads, concurrency, retry policy, and regions.
+
+See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+
+## Current limitations
+
+This repository does **not** claim to solve permissionless identity, Sybil resistance, collusion, censorship resistance, economic finality, or production-grade autonomous DeFi execution. Reputation is not yet a security primitive, and the coordinator remains centralized in the current POC.
 
 ## Roadmap
 
-**Intelligence → Security → Infrastructure → DeFi → Automation** is implemented as a reusable verification stack. The next research steps are permissionless discovery, portable signed reputation, economic settlement/escrow, multi-region benchmarks, collusion/Sybil testing, and real-world operator deployments.
+1. permissionless capability discovery;
+2. portable signed reputation receipts;
+3. multi-region WAN benchmarks;
+4. collusion/Sybil experiments and source-correlation analysis;
+5. economic security with escrow/stake/dispute experiments;
+6. optional NKN-denominated settlement after the verification layer is independently validated.
+
+See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+## License
+
+Apache-2.0. See [`LICENSE`](LICENSE).
+
+## Disclaimer
+
+This is experimental research software. Do not use it with production private keys, unattended financial authority, or safety-critical infrastructure without an independent review.
