@@ -94,7 +94,7 @@ async function main() {
     for (const agent of agents) {
       const { response } = await rpc(coordinator, agent.transport.addr, { type: 'manifest-query.v1' });
       const manifest = response?.payload?.result;
-      assert.equal(verifyManifest(manifest).valid, true);
+      assert.equal(verifyManifest(manifest, { transportSource: agent.transport.addr }).valid, true);
       assert.equal(manifest.agentId, agent.transport.addr);
       discovered.push({ ...agent, manifest });
     }
@@ -112,7 +112,7 @@ async function main() {
       const { response, requestId, attempt } = await rpc(coordinator, entry.agent.transport.addr, { type: 'execute.v1', spec: TASK });
       const result = response?.payload?.result;
       const attestation = response?.payload?.evidence?.attestation;
-      assert.equal(verifyAttestation(attestation, entry.agent.manifest).valid, true);
+      assert.equal(verifyAttestation(attestation, entry.agent.manifest, { transportSource: entry.agent.transport.addr }).valid, true);
       assert.equal(attestation.taskDigest, digest(TASK));
       assert.equal(attestation.resultDigest, digest(result));
       executions.push({ agent: entry.agent.transport.addr, source: entry.agent.source, quote: entry.quote.price, result, attestation, requestId, attempts: attempt });
