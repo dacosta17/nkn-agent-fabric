@@ -36,7 +36,7 @@ jobs:
       - name: Live NKN adversarial integration
         env:
           COINGECKO_DEMO_API_KEY: ${{ secrets.COINGECKO_DEMO_API_KEY }}
-          NKN_INTEGRATION_ROUNDS: 5
+          NKN_INTEGRATION_ROUNDS: 6
           NKN_RTT_SAMPLES: 20
           NKN_RESPONSE_TIMEOUT_MS: 7000
         run: npm run integration:nkn | tee nkn-integration-report.log
