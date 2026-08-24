@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "input": {
+    "a": 1,
+    "b": "two",
+    "nested": {
+      "x": true,
+      "z": ["nkn", 2]
+    }
+  },
+  "canonical": "{\"a\":1,\"b\":\"two\",\"nested\":{\"x\":true,\"z\":[\"nkn\",2]}}",
+  "sha256": "1c9808d0e2c2907e5ebb8df6cad5266a582c1ba0f8bd0fe12cc11027dcc942c8"
+}
