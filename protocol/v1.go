@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 )
 
 const Version = 1
@@ -15,26 +16,19 @@ const Version = 1
 // CanonicalJSON serializes protocol values deterministically.
 // Protocol v1 permits JSON null, booleans, strings, arrays, objects, and
 // integer numbers only. Decimal quantities MUST be represented as strings.
-// This avoids language-specific floating-point serialization differences.
 func CanonicalJSON(v any) ([]byte, error) {
-	if err := validateCanonical(v); err != nil {
-		return nil, err
-	}
+	if err := validateCanonical(v); err != nil { return nil, err }
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "")
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
+	if err := enc.Encode(v); err != nil { return nil, err }
 	return bytes.TrimSuffix(buf.Bytes(), []byte{'\n'}), nil
 }
 
 func Digest(v any) (string, error) {
 	canonical, err := CanonicalJSON(v)
-	if err != nil {
-		return "", err
-	}
+	if err != nil { return "", err }
 	h := sha256.Sum256(canonical)
 	return hex.EncodeToString(h[:]), nil
 }
@@ -52,9 +46,7 @@ type Envelope struct {
 
 func NewEnvelope(kind, requestID, sender, recipient string, createdAt, expiresAt int64, payload map[string]any) (Envelope, error) {
 	e := Envelope{V: Version, Kind: kind, RequestID: requestID, Sender: sender, Recipient: recipient, CreatedAt: createdAt, ExpiresAt: expiresAt, Payload: payload}
-	if err := ValidateEnvelope(e); err != nil {
-		return Envelope{}, err
-	}
+	if err := ValidateEnvelope(e); err != nil { return Envelope{}, err }
 	return e, nil
 }
 
@@ -69,7 +61,10 @@ func validateCanonical(v any) error {
 	switch x := v.(type) {
 	case nil, bool, string:
 		return nil
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return nil
+	case json.Number:
+		if _, err := strconv.ParseInt(string(x), 10, 64); err != nil { return errors.New("canonical protocol numbers must be signed integers") }
 		return nil
 	case float32:
 		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) || math.Trunc(float64(x)) != float64(x) { return errors.New("canonical protocol numbers must be finite integers") }
