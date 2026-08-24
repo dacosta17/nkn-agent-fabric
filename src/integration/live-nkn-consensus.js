@@ -163,7 +163,7 @@ async function sessionSmokeTest(coordinator, worker) {
   return true;
 }
 
-async function centralHttpBaseline(samples) {
+async function centralHttpBaseline(sampleCount) {
   const server = http.createServer((req, res) => {
     if (req.url === '/ping') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -174,19 +174,19 @@ async function centralHttpBaseline(samples) {
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
-  const samples = [];
+  const timings = [];
   try {
-    for (let i = 0; i < samples; i += 1) {
+    for (let i = 0; i < sampleCount; i += 1) {
       const started = performance.now();
       const response = await fetch(`http://127.0.0.1:${port}/ping`);
       assert.equal(response.status, 200);
       await response.json();
-      samples.push(performance.now() - started);
+      timings.push(performance.now() - started);
     }
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
-  return samples;
+  return timings;
 }
 
 async function main() {
