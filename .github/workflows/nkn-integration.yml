@@ -13,7 +13,7 @@ on:
 jobs:
   live-nkn:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -33,7 +33,12 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: Live NKN adversarial integration
+      - name: Attested agent-market integration
+        run: |
+          set -o pipefail
+          npm run integration:market | tee nkn-attested-market-report.log
+
+      - name: Live NKN adversarial consensus integration
         env:
           COINGECKO_DEMO_API_KEY: ${{ secrets.COINGECKO_DEMO_API_KEY }}
           NKN_INTEGRATION_ROUNDS: 6
@@ -44,16 +49,20 @@ jobs:
           set -o pipefail
           npm run integration:nkn | tee nkn-integration-report.log
 
-      - name: Publish integration report
+      - name: Publish integration reports
         if: always()
         run: |
-          echo '## NKN integration report'
+          echo '## Attested agent-market report'
+          cat nkn-attested-market-report.log || true
+          echo '## NKN consensus report'
           cat nkn-integration-report.log || true
 
-      - name: Upload integration report
+      - name: Upload integration reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: nkn-live-integration-report
-          path: nkn-integration-report.log
+          name: nkn-live-integration-reports
+          path: |
+            nkn-attested-market-report.log
+            nkn-integration-report.log
           if-no-files-found: warn
