@@ -2,6 +2,7 @@ import nkn from 'nkn-sdk';
 
 const DEFAULT_CONNECT_ATTEMPTS = 3;
 const DEFAULT_CONNECT_BACKOFF_MS = 1500;
+const DEFAULT_RESPONSE_TIMEOUT_MS = 7000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -11,6 +12,7 @@ export async function createNknTransport({
   connectTimeoutMs = 45_000,
   connectAttempts = Number(process.env.NKN_CONNECT_ATTEMPTS ?? DEFAULT_CONNECT_ATTEMPTS),
   connectBackoffMs = Number(process.env.NKN_CONNECT_BACKOFF_MS ?? DEFAULT_CONNECT_BACKOFF_MS),
+  responseTimeoutMs = Number(process.env.NKN_RESPONSE_TIMEOUT_MS ?? DEFAULT_RESPONSE_TIMEOUT_MS),
   rpcServerAddr = process.env.NKN_RPC_SERVER_ADDR,
 } = {}) {
   let lastError;
@@ -22,7 +24,7 @@ export async function createNknTransport({
         identifier,
         numSubClients,
         originalClient: false,
-        responseTimeout: 5000,
+        responseTimeout: responseTimeoutMs,
         reconnectIntervalMin: 1000,
         reconnectIntervalMax: 10000,
         ...(rpcServerAddr ? { rpcServerAddr } : {}),
