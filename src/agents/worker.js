@@ -2,9 +2,16 @@ import { createNknTransport } from '../lib/nkn-transport.js';
 import { createResponse, parseEnvelope, BoundedTtlSet } from '../lib/runtime.js';
 import { validateObservation } from '../lib/tasks.js';
 import { digest } from '../lib/canonical.js';
+import { createIdentity, createIdentityBindingProof, signManifest } from '../lib/agent-trust.js';
 
 const source = process.env.SOURCE ?? 'coingecko';
+const providerId = process.env.PROVIDER_ID ?? source;
+const sourceGroup = process.env.SOURCE_GROUP ?? source;
+const operatorId = process.env.OPERATOR_ID;
+if (!operatorId) throw new Error('OPERATOR_ID is required; operator identity is a security input');
+const identity = createIdentity();
 const transport = await createNknTransport({ identifier: `${source}-${process.pid}` });
+const manifest = signManifest({ nknAddress: transport.addr, identity, capabilities: ['market-observation'] });
 const seen = new BoundedTtlSet();
 
 async function observe(task) {
@@ -32,9 +39,12 @@ transport.onMessage(async ({ src, payload }) => {
     const env = parseEnvelope(payload);
     if (env.recipient !== transport.addr || seen.has(env.requestId)) return false;
     seen.add(env.requestId);
+    if (env.kind === 'identity-challenge') {
+      return JSON.stringify({ type: 'identity-response.v1', challenge: env.payload.challenge, nknAddress: transport.addr, manifest, identityBinding: createIdentityBindingProof({ nknAddress: transport.addr, identity }) });
+    }
     if (env.kind !== 'request') return false;
     const result = await observe(env.payload.task);
-    const evidence = { source, capturedAt: result.timestamp, digest: digest(result) };
+    const evidence = { source, providerId, operatorId, sourceGroup, capturedAt: result.timestamp, digest: digest(result) };
     return JSON.stringify(createResponse({ requestId: env.requestId, sender: transport.addr, recipient: src, result, evidence }));
   } catch (err) {
     return JSON.stringify({ error: err.message });
@@ -42,4 +52,4 @@ transport.onMessage(async ({ src, payload }) => {
 });
 
 await new Promise((resolve) => transport.onConnect(resolve));
-console.log(JSON.stringify({ role: 'worker', source, address: transport.addr }));
+console.log(JSON.stringify({ role: 'worker', source, providerId, sourceGroup, operatorId, address: transport.addr, manifest }));

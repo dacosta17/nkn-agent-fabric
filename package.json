@@ -8,7 +8,7 @@
   "repository": {"type": "git", "url": "https://github.com/dacosta17/nkn-agent-fabric.git"},
   "bugs": {"url": "https://github.com/dacosta17/nkn-agent-fabric/issues"},
   "homepage": "https://github.com/dacosta17/nkn-agent-fabric",
-  "keywords": ["nkn","distributed-systems","ai-agents","verifiable-computation","byzantine-fault-tolerance","p2p","decentralized-infrastructure","cryptography"],
+  "keywords": ["nkn","distributed-systems","ai-agents","verifiable-computation","byzantine-fault-tolerance","decentralized-infrastructure","cryptography"],
   "engines": {"node": ">=22"},
   "scripts": {
     "test": "node --test",
@@ -23,5 +23,5 @@
     "benchmark:central": "node src/agents/benchmark-central.js",
     "test:go": "go test ./..."
   },
-  "dependencies": {"nkn-sdk": "1.2.5"}
+  "dependencies": {"nkn-sdk": "1.3.6"}
 }
