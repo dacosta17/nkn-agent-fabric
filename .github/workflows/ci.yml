@@ -35,3 +35,6 @@ jobs:
 
       - name: Unit tests
         run: npm test
+
+      - name: Verifiable domain matrix
+        run: npm run test:domains
