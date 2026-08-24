@@ -16,6 +16,20 @@ NKN already has public examples for P2P messaging, remote connectivity, file tra
 
 The current implementation tests that thesis over the official `nkn-sdk` MultiClient transport.
 
+## Reference protocol v1
+
+The project now freezes a transport-agnostic protocol core alongside the NKN adapters:
+
+- canonical JSON and SHA-256 digest rules;
+- versioned envelopes;
+- cross-language interoperability vectors;
+- a Go reference implementation with no transport dependency;
+- JavaScript and Go implementations that must produce identical canonical bytes and digests.
+
+See [`protocol/README.md`](protocol/README.md), [`docs/PROTOCOL.md`](docs/PROTOCOL.md), and [`vectors/protocol-v1-canonical.json`](vectors/protocol-v1-canonical.json).
+
+NKN transport remains an adapter layer. The official NKN Go SDK provides MultiClient and session primitives suitable for a Go transport implementation, while the protocol package stays language- and transport-agnostic.
+
 ## Five task domains
 
 **Intelligence** — independent research agents provide source-backed observations; weak or non-quorum evidence is rejected.
@@ -70,17 +84,19 @@ All five domains reuse the same capability, quote, attestation, provenance, fres
 - failure injection and explicit quorum-failure assertions;
 - p50/p95/p99 NKN RTT measurement;
 - centralized localhost HTTP lower-bound baseline;
-- deterministic domain matrix with positive and negative cases.
+- deterministic domain matrix with positive and negative cases;
+- shared JavaScript/Go canonicalization vectors.
 
 ## Quick start
 
-Requirements: Node.js 22+ (Node 24 is used by CI).
+Requirements: Node.js 22+ and Go 1.22+.
 
 ```bash
 npm install
 npm run check
 npm test
 npm run test:domains
+go test ./...
 ```
 
 Run the live NKN integration from a network-enabled environment:
@@ -129,7 +145,8 @@ This repository does **not** claim to solve permissionless identity, Sybil resis
 3. multi-region WAN benchmarks;
 4. collusion/Sybil experiments and source-correlation analysis;
 5. economic security with escrow/stake/dispute experiments;
-6. optional NKN-denominated settlement after the verification layer is independently validated.
+6. NKN Go transport adapter and cross-language live interoperability;
+7. optional NKN-denominated settlement after the verification layer is independently validated.
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 

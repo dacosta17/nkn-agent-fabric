@@ -1,29 +1,15 @@
 {
   "name": "nkn-agent-fabric",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "Verifiable independent agent execution over the official NKN network SDK.",
   "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/dacosta17/nkn-agent-fabric.git"
-  },
-  "bugs": {
-    "url": "https://github.com/dacosta17/nkn-agent-fabric/issues"
-  },
+  "repository": {"type": "git", "url": "https://github.com/dacosta17/nkn-agent-fabric.git"},
+  "bugs": {"url": "https://github.com/dacosta17/nkn-agent-fabric/issues"},
   "homepage": "https://github.com/dacosta17/nkn-agent-fabric",
-  "keywords": [
-    "nkn",
-    "distributed-systems",
-    "ai-agents",
-    "verifiable-computation",
-    "byzantine-fault-tolerance",
-    "p2p",
-    "decentralized-infrastructure",
-    "cryptography"
-  ],
-  "engines": { "node": ">=22" },
+  "keywords": ["nkn","distributed-systems","ai-agents","verifiable-computation","byzantine-fault-tolerance","p2p","decentralized-infrastructure","cryptography"],
+  "engines": {"node": ">=22"},
   "scripts": {
     "test": "node --test",
     "check": "find src -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
@@ -34,9 +20,8 @@
     "agent:worker": "node src/agents/worker.js",
     "agent:auditor": "node src/agents/auditor.js",
     "benchmark:nkn": "node src/agents/benchmark-nkn.js",
-    "benchmark:central": "node src/agents/benchmark-central.js"
+    "benchmark:central": "node src/agents/benchmark-central.js",
+    "test:go": "go test ./..."
   },
-  "dependencies": {
-    "nkn-sdk": "1.2.5"
-  }
+  "dependencies": {"nkn-sdk": "1.2.5"}
 }
