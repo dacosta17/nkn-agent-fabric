@@ -18,6 +18,32 @@ function requireFiniteNumber(value, name) {
   if (!Number.isFinite(value)) throw new Error(`${name} must be finite`);
 }
 
+function independentEvidence(observations, minimum) {
+  const valid = observations.filter((o) => (
+    typeof o?.operatorId === 'string' &&
+    typeof o?.providerId === 'string' &&
+    o.operatorId.length > 0 &&
+    o.providerId.length > 0
+  ));
+  if (valid.length < minimum) return { accepted: false, valid: [], operatorCount: 0, providerCount: 0, reason: 'insufficient-independent-observations' };
+
+  const operators = new Set(valid.map((o) => o.operatorId));
+  const providers = new Set(valid.map((o) => o.providerId));
+  if (operators.size < minimum) return { accepted: false, valid, operatorCount: operators.size, providerCount: providers.size, reason: 'insufficient-operator-diversity' };
+  if (providers.size < minimum) return { accepted: false, valid, operatorCount: operators.size, providerCount: providers.size, reason: 'insufficient-provider-diversity' };
+
+  const deduped = [];
+  const seen = new Set();
+  for (const item of valid) {
+    const key = `${item.operatorId}:${item.providerId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+  if (deduped.length < minimum) return { accepted: false, valid: deduped, operatorCount: operators.size, providerCount: providers.size, reason: 'duplicate-provider-identity' };
+  return { accepted: true, valid: deduped, operatorCount: operators.size, providerCount: providers.size };
+}
+
 export function listDomainCapabilities() {
   return DOMAIN_NAMES.map((domain) => domainCapability(domain));
 }
@@ -29,6 +55,7 @@ export function domainCapability(domain) {
     domain,
     capability: `verifiable-${domain}.v1`,
     requiresIndependentProviders: true,
+    requiresIndependentOperators: true,
     deterministicValidation: true,
   };
 }
@@ -62,19 +89,29 @@ export function createDomainTask(domain, input = {}) {
 }
 
 function validateIntelligence(observations) {
-  if (observations.length < 2) return { accepted: false, reason: 'insufficient-independent-observations' };
-  const valid = observations.filter((o) => typeof o.answer === 'string' && Array.isArray(o.sources) && o.sources.length >= 2);
-  if (valid.length < 2) return { accepted: false, reason: 'insufficient-evidence' };
+  const independent = independentEvidence(observations, 2);
+  if (!independent.accepted) return independent;
+  const valid = independent.valid.filter((o) => typeof o.answer === 'string' && Array.isArray(o.sources) && o.sources.length >= 2);
+  if (valid.length < 2) return { accepted: false, reason: 'insufficient-evidence', operatorCount: independent.operatorCount, providerCount: independent.providerCount };
   const answers = new Map();
   for (const o of valid) answers.set(o.answer, (answers.get(o.answer) ?? 0) + 1);
   const [answer, count] = [...answers.entries()].sort((a, b) => b[1] - a[1])[0];
-  return { accepted: count >= 2, confidence: count / valid.length, answer, providers: valid.length, reason: count >= 2 ? 'quorum' : 'no-answer-quorum' };
+  return {
+    accepted: count >= 2,
+    confidence: count / valid.length,
+    answer,
+    providers: valid.length,
+    operatorCount: independent.operatorCount,
+    providerCount: independent.providerCount,
+    reason: count >= 2 ? 'quorum' : 'no-answer-quorum',
+  };
 }
 
 function validateSecurity(observations) {
-  if (observations.length < 3) return { accepted: false, reason: 'insufficient-independent-observations' };
-  const valid = observations.filter((o) => severityRank[o.severity] !== undefined && typeof o.findingsDigest === 'string');
-  if (valid.length < 3) return { accepted: false, reason: 'invalid-security-observation' };
+  const independent = independentEvidence(observations, 3);
+  if (!independent.accepted) return independent;
+  const valid = independent.valid.filter((o) => severityRank[o.severity] !== undefined && typeof o.findingsDigest === 'string');
+  if (valid.length < 3) return { accepted: false, reason: 'invalid-security-observation', operatorCount: independent.operatorCount, providerCount: independent.providerCount };
   const critical = valid.filter((o) => o.severity === 'critical').length;
   const highOrWorse = valid.filter((o) => severityRank[o.severity] >= severityRank.high).length;
   return {
@@ -82,29 +119,33 @@ function validateSecurity(observations) {
     maxSeverity: valid.reduce((max, o) => severityRank[o.severity] > severityRank[max] ? o.severity : max, 'info'),
     highOrWorseCount: highOrWorse,
     providerCount: valid.length,
+    operatorCount: independent.operatorCount,
     reason: critical > 0 ? 'critical-finding' : 'no-critical-finding',
   };
 }
 
 function validateInfrastructure(observations) {
-  if (observations.length < 3) return { accepted: false, reason: 'insufficient-independent-observations' };
-  const valid = observations.filter((o) => typeof o.healthy === 'boolean' && Number.isFinite(o.latencyMs));
-  if (valid.length < 3) return { accepted: false, reason: 'invalid-health-observation' };
+  const independent = independentEvidence(observations, 3);
+  if (!independent.accepted) return independent;
+  const valid = independent.valid.filter((o) => typeof o.healthy === 'boolean' && Number.isFinite(o.latencyMs));
+  if (valid.length < 3) return { accepted: false, reason: 'invalid-health-observation', operatorCount: independent.operatorCount, providerCount: independent.providerCount };
   const healthy = valid.filter((o) => o.healthy).length;
   const medianLatency = [...valid].map((o) => o.latencyMs).sort((a, b) => a - b)[Math.floor(valid.length / 2)];
   return {
     accepted: healthy >= Math.ceil(valid.length * 2 / 3),
     healthyProviders: healthy,
     providerCount: valid.length,
+    operatorCount: independent.operatorCount,
     medianLatencyMs: medianLatency,
     reason: healthy >= Math.ceil(valid.length * 2 / 3) ? 'availability-quorum' : 'availability-failure',
   };
 }
 
 function validateDefi(observations) {
-  if (observations.length < 3) return { accepted: false, reason: 'insufficient-independent-observations' };
-  const valid = observations.filter((o) => ['allow', 'deny'].includes(o.decision) && Number.isFinite(o.riskScore));
-  if (valid.length < 3) return { accepted: false, reason: 'invalid-risk-observation' };
+  const independent = independentEvidence(observations, 3);
+  if (!independent.accepted) return independent;
+  const valid = independent.valid.filter((o) => ['allow', 'deny'].includes(o.decision) && Number.isFinite(o.riskScore));
+  if (valid.length < 3) return { accepted: false, reason: 'invalid-risk-observation', operatorCount: independent.operatorCount, providerCount: independent.providerCount };
   const deny = valid.filter((o) => o.decision === 'deny').length;
   const medianRisk = [...valid].map((o) => o.riskScore).sort((a, b) => a - b)[Math.floor(valid.length / 2)];
   return {
@@ -112,20 +153,23 @@ function validateDefi(observations) {
     medianRiskScore: medianRisk,
     denyCount: deny,
     providerCount: valid.length,
+    operatorCount: independent.operatorCount,
     reason: deny > 0 ? 'provider-denied-action' : medianRisk >= 50 ? 'risk-above-policy' : 'risk-quorum',
   };
 }
 
 function validateAutomation(observations, task) {
-  if (observations.length < 3) return { accepted: false, reason: 'insufficient-independent-observations' };
-  const valid = observations.filter((o) => typeof o.approved === 'boolean' && typeof o.policyVersion === 'string');
-  if (valid.length < 3) return { accepted: false, reason: 'invalid-approval-observation' };
+  const independent = independentEvidence(observations, 3);
+  if (!independent.accepted) return independent;
+  const valid = independent.valid.filter((o) => typeof o.approved === 'boolean' && typeof o.policyVersion === 'string');
+  if (valid.length < 3) return { accepted: false, reason: 'invalid-approval-observation', operatorCount: independent.operatorCount, providerCount: independent.providerCount };
   const policyMatch = valid.filter((o) => o.policyVersion === task.input.policyVersion);
   const approved = policyMatch.filter((o) => o.approved).length;
   return {
     accepted: policyMatch.length === valid.length && approved >= 2,
     approvedProviders: approved,
     providerCount: valid.length,
+    operatorCount: independent.operatorCount,
     policyVersion: task.input.policyVersion,
     reason: policyMatch.length !== valid.length ? 'policy-version-conflict' : approved >= 2 ? 'approval-quorum' : 'approval-denied',
   };
