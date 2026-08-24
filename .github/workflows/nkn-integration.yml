@@ -1,0 +1,73 @@
+name: NKN Live Integration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/integration/**'
+      - 'src/lib/**'
+      - 'src/domains/**'
+      - 'test/**'
+      - 'package.json'
+      - '.github/workflows/nkn-integration.yml'
+
+jobs:
+  live-nkn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Syntax check
+        run: npm run check
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Verifiable domain matrix
+        run: npm run test:domains
+
+      - name: Attested agent-market integration
+        run: |
+          set -o pipefail
+          npm run integration:market | tee nkn-attested-market-report.log
+
+      - name: Live NKN adversarial consensus integration
+        env:
+          COINGECKO_DEMO_API_KEY: ${{ secrets.COINGECKO_DEMO_API_KEY }}
+          NKN_INTEGRATION_ROUNDS: 6
+          NKN_RTT_SAMPLES: 20
+          NKN_RESPONSE_TIMEOUT_MS: 7000
+          NKN_MAX_OBSERVATION_AGE_MS: 10000
+        run: |
+          set -o pipefail
+          timeout 180s npm run integration:nkn | tee nkn-integration-report.log
+
+      - name: Publish integration reports
+        if: always()
+        run: |
+          echo '## Attested agent-market report'
+          cat nkn-attested-market-report.log || true
+          echo '## NKN consensus report'
+          cat nkn-integration-report.log || true
+
+      - name: Upload integration reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: nkn-live-integration-reports
+          path: |
+            nkn-attested-market-report.log
+            nkn-integration-report.log
+          if-no-files-found: warn
