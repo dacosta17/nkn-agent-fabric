@@ -39,10 +39,21 @@ jobs:
           NKN_INTEGRATION_ROUNDS: 6
           NKN_RTT_SAMPLES: 20
           NKN_RESPONSE_TIMEOUT_MS: 7000
-        run: npm run integration:nkn | tee nkn-integration-report.log
+          NKN_MAX_OBSERVATION_AGE_MS: 10000
+        run: |
+          set -o pipefail
+          npm run integration:nkn | tee nkn-integration-report.log
 
       - name: Publish integration report
         if: always()
         run: |
           echo '## NKN integration report'
           cat nkn-integration-report.log || true
+
+      - name: Upload integration report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nkn-live-integration-report
+          path: nkn-integration-report.log
+          if-no-files-found: warn
