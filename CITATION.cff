@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+title: "NKN Verifiable Agent Network"
+version: "0.6.0"
+date-released: "2026-08-24"
+authors:
+  - family-names: "Konstantakopoulos"
+    given-names: "Konstantinos"
+    orcid: ""
+repository-code: "https://github.com/dacosta17/nkn-agent-fabric"
+license: Apache-2.0
+type: software
+abstract: >-
+  Research-grade distributed-agent protocol built on the official NKN JavaScript
+  SDK, focused on verifiable independent execution, evidence provenance,
+  deterministic domain validation, quorum, and Byzantine-resistant agent work.
+keywords:
+  - NKN
+  - distributed systems
+  - AI agents
+  - verifiable computation
+  - Byzantine fault tolerance
+  - decentralized infrastructure

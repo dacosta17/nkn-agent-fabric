@@ -3,6 +3,26 @@
   "version": "0.6.0",
   "private": true,
   "type": "module",
+  "description": "Verifiable independent agent execution over the official NKN network SDK.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dacosta17/nkn-agent-fabric.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dacosta17/nkn-agent-fabric/issues"
+  },
+  "homepage": "https://github.com/dacosta17/nkn-agent-fabric",
+  "keywords": [
+    "nkn",
+    "distributed-systems",
+    "ai-agents",
+    "verifiable-computation",
+    "byzantine-fault-tolerance",
+    "p2p",
+    "decentralized-infrastructure",
+    "cryptography"
+  ],
   "engines": { "node": ">=22" },
   "scripts": {
     "test": "node --test",
