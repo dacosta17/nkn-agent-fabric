@@ -70,7 +70,11 @@ func appendCanonical(buf *bytes.Buffer, v any) error {
 	case nil:
 		buf.WriteString("null")
 	case bool:
-		if x { buf.WriteString("true") } else { buf.WriteString("false") }
+		if x {
+			buf.WriteString("true")
+		} else {
+			buf.WriteString("false")
+		}
 	case string:
 		return appendJSONString(buf, x)
 	case int:
@@ -84,21 +88,29 @@ func appendCanonical(buf *bytes.Buffer, v any) error {
 	case int64:
 		return appendInteger(buf, x)
 	case uint:
-		if uint64(x) > uint64(maxSafeInteger) { return errors.New("canonical integer exceeds JavaScript safe integer range") }
+		if uint64(x) > uint64(maxSafeInteger) {
+			return errors.New("canonical integer exceeds JavaScript safe integer range")
+		}
 		buf.WriteString(strconv.FormatUint(uint64(x), 10))
 	case uint8:
 		buf.WriteString(strconv.FormatUint(uint64(x), 10))
 	case uint16:
 		buf.WriteString(strconv.FormatUint(uint64(x), 10))
 	case uint32:
-		if uint64(x) > uint64(maxSafeInteger) { return errors.New("canonical integer exceeds JavaScript safe integer range") }
+		if uint64(x) > uint64(maxSafeInteger) {
+			return errors.New("canonical integer exceeds JavaScript safe integer range")
+		}
 		buf.WriteString(strconv.FormatUint(uint64(x), 10))
 	case uint64:
-		if x > uint64(maxSafeInteger) { return errors.New("canonical integer exceeds JavaScript safe integer range") }
+		if x > uint64(maxSafeInteger) {
+			return errors.New("canonical integer exceeds JavaScript safe integer range")
+		}
 		buf.WriteString(strconv.FormatUint(x, 10))
 	case json.Number:
 		i, err := strconv.ParseInt(string(x), 10, 64)
-		if err != nil { return errors.New("canonical protocol numbers must be signed integers") }
+		if err != nil {
+			return errors.New("canonical protocol numbers must be signed integers")
+		}
 		return appendInteger(buf, i)
 	case float32:
 		return appendFloatInteger(buf, float64(x))
@@ -107,20 +119,32 @@ func appendCanonical(buf *bytes.Buffer, v any) error {
 	case []any:
 		buf.WriteByte('[')
 		for i, item := range x {
-			if i > 0 { buf.WriteByte(',') }
-			if err := appendCanonical(buf, item); err != nil { return err }
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := appendCanonical(buf, item); err != nil {
+				return err
+			}
 		}
 		buf.WriteByte(']')
 	case map[string]any:
 		keys := make([]string, 0, len(x))
-		for key := range x { keys = append(keys, key) }
+		for key := range x {
+			keys = append(keys, key)
+		}
 		sort.Slice(keys, func(i, j int) bool { return bytes.Compare([]byte(keys[i]), []byte(keys[j])) < 0 })
 		buf.WriteByte('{')
 		for i, key := range keys {
-			if i > 0 { buf.WriteByte(',') }
-			if err := appendJSONString(buf, key); err != nil { return err }
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := appendJSONString(buf, key); err != nil {
+				return err
+			}
 			buf.WriteByte(':')
-			if err := appendCanonical(buf, x[key]); err != nil { return err }
+			if err := appendCanonical(buf, x[key]); err != nil {
+				return err
+			}
 		}
 		buf.WriteByte('}')
 	default:
@@ -151,15 +175,26 @@ func appendJSONString(buf *bytes.Buffer, value string) error {
 	buf.WriteByte('"')
 	for _, r := range value {
 		switch r {
-		case '"': buf.WriteString(`\"`)
-		case '\\': buf.WriteString(`\\`)
-		case '\b': buf.WriteString(`\b`)
-		case '\f': buf.WriteString(`\f`)
-		case '\n': buf.WriteString(`\n`)
-		case '\r': buf.WriteString(`\r`)
-		case '\t': buf.WriteString(`\t`)
+		case '"':
+			buf.WriteString(`\"`)
+		case '\\':
+			buf.WriteString(`\\`)
+		case '\b':
+			buf.WriteString(`\b`)
+		case '\f':
+			buf.WriteString(`\f`)
+		case '\n':
+			buf.WriteString(`\n`)
+		case '\r':
+			buf.WriteString(`\r`)
+		case '\t':
+			buf.WriteString(`\t`)
 		default:
-			if r < 0x20 { fmt.Fprintf(buf, `\u%04x`, r) } else { buf.WriteRune(r) }
+			if r < 0x20 {
+				fmt.Fprintf(buf, `\u%04x`, r)
+			} else {
+				buf.WriteRune(r)
+			}
 		}
 	}
 	buf.WriteByte('"')
