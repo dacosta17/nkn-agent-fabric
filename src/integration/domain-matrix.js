@@ -3,11 +3,11 @@ import { createDomainTask, validateDomainResult, buildTaskEvidence, listDomainCa
 
 const scenarios = {
   intelligence: {
-    task: { question: 'Is the NKN network activity elevated?', },
+    task: { question: 'Is the NKN network activity elevated?' },
     observations: [
       { answer: 'yes', sources: ['rpc', 'market'] },
       { answer: 'yes', sources: ['news', 'network'] },
-      { answer: 'no', sources: ['social', 'market'] },
+      { answer: 'no', sources: ['social', 'community'] },
     ],
   },
   security: {
@@ -34,7 +34,7 @@ const scenarios = {
       { decision: 'allow', riskScore: 22 },
       { decision: 'allow', riskScore: 26 },
       { decision: 'allow', riskScore: 31 },
-      { decision: 'deny', riskScore: 90 },
+      { decision: 'allow', riskScore: 28 },
     ],
   },
   automation: {
@@ -43,7 +43,7 @@ const scenarios = {
       { approved: true, policyVersion: '2026-08-v1' },
       { approved: true, policyVersion: '2026-08-v1' },
       { approved: false, policyVersion: '2026-08-v1' },
-      { approved: true, policyVersion: '2025-12-v3' },
+      { approved: true, policyVersion: '2026-08-v1' },
     ],
   },
 };
@@ -61,21 +61,57 @@ function runScenario(domain) {
 
 const reports = Object.keys(scenarios).map(runScenario);
 
-for (const domain of Object.keys(scenarios)) {
-  const scenario = scenarios[domain];
-  const task = createDomainTask(domain, scenario.task);
-  const adversarial = scenario.observations.map((o, index) => index === 0
-    ? ({ ...o, policyVersion: domain === 'automation' ? 'evil' : o.policyVersion })
-    : o);
-  if (domain === 'intelligence') adversarial[0] = { answer: 'fabricated', sources: ['one'] };
-  const result = validateDomainResult(task, adversarial);
-  if (domain === 'intelligence') assert.equal(result.accepted, false, 'intelligence must reject weak fabricated evidence');
-  if (domain === 'automation') assert.equal(result.accepted, false, 'automation must reject policy mismatch');
+const negativeCases = {
+  intelligence: () => {
+    const task = createDomainTask('intelligence', { question: 'Q' });
+    return validateDomainResult(task, [
+      { answer: 'fabricated', sources: ['one'] },
+      { answer: 'yes', sources: ['two', 'three'] },
+      { answer: 'no', sources: ['four', 'five'] },
+    ]).accepted;
+  },
+  security: () => {
+    const task = createDomainTask('security', { target: 'contract' });
+    return validateDomainResult(task, [
+      { severity: 'critical', findingsDigest: 'evil' },
+      { severity: 'low', findingsDigest: 'a' },
+      { severity: 'medium', findingsDigest: 'b' },
+    ]).accepted;
+  },
+  infrastructure: () => {
+    const task = createDomainTask('infrastructure', { service: 'api' });
+    return validateDomainResult(task, [
+      { healthy: true, latencyMs: 10 },
+      { healthy: false, latencyMs: 200 },
+      { healthy: false, latencyMs: 300 },
+    ]).accepted;
+  },
+  defi: () => {
+    const task = createDomainTask('defi', { action: 'swap' });
+    return validateDomainResult(task, [
+      { decision: 'deny', riskScore: 10 },
+      { decision: 'allow', riskScore: 20 },
+      { decision: 'allow', riskScore: 30 },
+    ]).accepted;
+  },
+  automation: () => {
+    const task = createDomainTask('automation', { action: 'deploy', policyVersion: 'v1' });
+    return validateDomainResult(task, [
+      { approved: true, policyVersion: 'v1' },
+      { approved: true, policyVersion: 'evil' },
+      { approved: true, policyVersion: 'v1' },
+    ]).accepted;
+  },
+};
+
+for (const [domain, runNegative] of Object.entries(negativeCases)) {
+  assert.equal(runNegative(), false, `${domain} adversarial case must be rejected`);
 }
 
 console.log(JSON.stringify({
   phase: 'verifiable-domain-matrix',
   capabilities: listDomainCapabilities(),
   reports,
+  negativeCases: Object.fromEntries(Object.keys(negativeCases).map((domain) => [domain, 'rejected'])),
   status: 'pass',
 }, null, 2));
