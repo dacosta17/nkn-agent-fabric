@@ -1,4 +1,4 @@
-import { createHash, generateKeyPairSync, sign, verify, randomUUID } from 'node:crypto';
+import { generateKeyPairSync, sign, verify, randomUUID } from 'node:crypto';
 import { stableJson, digest } from './canonical.js';
 
 const DEFAULT_MANIFEST_TTL_MS = 5 * 60_000;
@@ -22,7 +22,7 @@ export function createIdentity() {
 }
 
 function unsignedManifest(manifest) {
-  const { signature, ...unsigned } = manifest;
+  const { signature, fingerprint, ...unsigned } = manifest;
   return unsigned;
 }
 
@@ -46,18 +46,19 @@ export function signManifest({ nknAddress, identity, capabilities, endpointClass
 
 export function verifyManifest(manifest, { now = Date.now() } = {}) {
   if (!manifest || manifest.type !== 'agent-capability.v1') return { valid: false, reason: 'invalid-manifest-type' };
-  if (now > manifest.expiresAt) return { valid: false, reason: 'manifest-expired' };
+  if (!Number.isFinite(manifest.expiresAt) || now > manifest.expiresAt) return { valid: false, reason: 'manifest-expired' };
   try {
     const publicKey = Buffer.from(manifest.publicKey, 'base64');
-    const key = publicKey.length ? publicKey : null;
-    if (!key) return { valid: false, reason: 'missing-public-key' };
+    if (!publicKey.length) return { valid: false, reason: 'missing-public-key' };
+    const unsigned = unsignedManifest(manifest);
     const valid = verify(
       null,
-      Buffer.from(stableJson(unsignedManifest(manifest))),
-      { key: key, format: 'der', type: 'spki' },
+      Buffer.from(stableJson(unsigned)),
+      { key: publicKey, format: 'der', type: 'spki' },
       fromB64(manifest.signature),
     );
     if (!valid) return { valid: false, reason: 'invalid-signature' };
+    if (manifest.fingerprint !== digest(unsigned)) return { valid: false, reason: 'fingerprint-mismatch' };
     return { valid: true, fingerprint: manifest.fingerprint };
   } catch {
     return { valid: false, reason: 'signature-verification-error' };
