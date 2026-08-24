@@ -110,6 +110,7 @@ async function startWorker(source) {
     numSubClients: 2,
   });
   const seen = new BoundedTtlSet({ max: 1000, ttlMs: 120_000 });
+  let lastObservation = null;
 
   transport.onMessage(async ({ src, payload }) => {
     try {
@@ -120,9 +121,24 @@ async function startWorker(source) {
       seen.add(key);
 
       if (env.payload?.task?.type === 'price-observation.v1') {
-        const result = await observeFromSource(source);
+        let result;
+        let degraded = false;
+        let recoveryReason = null;
+        try {
+          result = await observeFromSource(source);
+          lastObservation = result;
+        } catch (error) {
+          const cacheAge = lastObservation ? Date.now() - lastObservation.capturedAt : Number.POSITIVE_INFINITY;
+          if (lastObservation && cacheAge <= MAX_OBSERVATION_AGE_MS) {
+            result = { ...lastObservation, degraded: true, recoveryReason: error.message };
+            degraded = true;
+            recoveryReason = error.message;
+          } else {
+            throw error;
+          }
+        }
         if (!Number.isFinite(result.price) || result.price <= 0) throw new Error(`provider ${source} returned invalid price`);
-        const evidence = { source, capturedAt: result.capturedAt, digest: digest(result) };
+        const evidence = { source, capturedAt: result.capturedAt, digest: digest(result), degraded, recoveryReason };
         return JSON.stringify(createResponse({ requestId: env.requestId, sender: transport.addr, recipient: src, result, evidence }));
       }
 
@@ -247,7 +263,7 @@ async function main() {
 
       const decision = quorumDecision(observations);
       metrics.consensusRounds.push({ round, observations, decision });
-      console.log(JSON.stringify({ phase: 'consensus', round, decision, observations: observations.map((o) => ({ source: o.source, venue: o.venue, price: o.price, capturedAt: o.capturedAt, elapsed: o.elapsed, error: o.error })) }));
+      console.log(JSON.stringify({ phase: 'consensus', round, decision, observations: observations.map((o) => ({ source: o.source, venue: o.venue, price: o.price, capturedAt: o.capturedAt, elapsed: o.elapsed, degraded: o.degraded, error: o.error })) }));
 
       if (round <= 3) {
         assert.equal(decision.quorum, true, `expected quorum in round ${round}`);
