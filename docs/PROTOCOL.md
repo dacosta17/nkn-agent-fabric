@@ -11,15 +11,16 @@ This document is the language-neutral specification boundary for the application
 Protocol objects that are signed, hashed, or referenced by a digest MUST use the v1 canonical form:
 
 - UTF-8 encoded JSON;
-- object keys sorted lexicographically by Unicode code point;
+- object keys sorted by lexicographic comparison of their UTF-8 byte sequences;
 - object members separated by `,` and `:` with no insignificant whitespace;
 - array order preserved;
 - JSON `null`, booleans, strings, arrays, and objects allowed;
-- integer JSON numbers allowed;
+- integer JSON numbers allowed only within the JavaScript safe-integer range (`[-9007199254740991, 9007199254740991]`);
 - decimal values MUST be strings to avoid floating-point representation differences between languages;
+- strings MUST contain valid UTF-8; control characters are escaped using JSON escapes and other Unicode characters remain UTF-8 encoded;
 - SHA-256 of the canonical UTF-8 bytes, rendered as lowercase hexadecimal.
 
-The normative interoperability vector is `vectors/protocol-v1-canonical.json`.
+The normative interoperability vectors are `vectors/protocol-v1-canonical.json` and `vectors/protocol-v1-unicode.json`.
 
 ## 3. Envelope
 
@@ -38,7 +39,7 @@ The v1 application envelope is:
 }
 ```
 
-`createdAt` and `expiresAt` are Unix milliseconds and MUST be integers. `expiresAt` MUST be greater than `createdAt`.
+`createdAt` and `expiresAt` are Unix milliseconds and MUST be integers within the canonical safe-integer range. `expiresAt` MUST be greater than `createdAt`.
 
 ## 4. Capability manifest
 
@@ -83,7 +84,7 @@ The protocol core MUST NOT depend on NKN. NKN is the current transport/addressab
 
 ## 9. Interoperability
 
-A language implementation is v1-compatible only when it matches the normative vector byte-for-byte and hash-for-hash. The repository includes a JavaScript implementation and a Go reference implementation. Future Rust/other implementations MUST consume the same vectors before participating in live interoperability tests.
+A language implementation is v1-compatible only when it matches every normative vector byte-for-byte and hash-for-hash. The repository includes a JavaScript implementation and a Go reference implementation. Future Rust/other implementations MUST consume the same vectors before participating in live interoperability tests.
 
 ## 10. Future economic layer
 
