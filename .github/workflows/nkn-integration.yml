@@ -64,7 +64,7 @@ jobs:
 
       - name: Upload integration reports
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: nkn-live-integration-reports
           path: |
