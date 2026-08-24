@@ -3,14 +3,26 @@ import { createResponse, parseEnvelope, BoundedTtlSet } from '../lib/runtime.js'
 import { validateObservation } from '../lib/tasks.js';
 import { digest } from '../lib/canonical.js';
 
-const source = process.env.SOURCE ?? 'synthetic';
+const source = process.env.SOURCE ?? 'coingecko';
 const transport = await createNknTransport({ identifier: `${source}-${process.pid}` });
 const seen = new BoundedTtlSet();
 
 async function observe(task) {
   if (task.type !== 'market-observation.v1') throw new Error('unsupported task');
-  const base = source === 'synthetic' ? 0.01 : 0;
-  const result = { symbol: task.symbol, price: Number((base + 0.01).toFixed(8)), timestamp: Date.now(), source };
+  const timestamp = Date.now();
+  let price;
+  if (source === 'coingecko') {
+    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=nkn&vs_currencies=usd', { headers: { accept: 'application/json' } });
+    if (!r.ok) throw new Error(`CoinGecko HTTP ${r.status}`);
+    const body = await r.json();
+    price = Number(body?.nkn?.usd);
+  } else if (source === 'binance') {
+    const r = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=NKNUSDT', { headers: { accept: 'application/json' } });
+    if (!r.ok) throw new Error(`Binance HTTP ${r.status}`);
+    const body = await r.json();
+    price = Number(body?.price);
+  } else throw new Error(`unknown source ${source}`);
+  const result = { symbol: task.symbol, price, timestamp, source };
   validateObservation(result);
   return result;
 }
