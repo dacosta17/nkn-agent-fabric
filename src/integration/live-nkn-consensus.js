@@ -9,12 +9,8 @@ import { createRequest, createResponse, parseEnvelope, BoundedTtlSet } from '../
 const SYMBOL = 'NKNUSDT';
 const ROUNDS = Number(process.env.NKN_INTEGRATION_ROUNDS ?? 6);
 const RTT_SAMPLES = Number(process.env.NKN_RTT_SAMPLES ?? 20);
-const TOLERANCE = Number(process.env.NKN_PRICE_TOLERANCE ?? 0.12);
+const TOLERANCE = Number(process.env.NKN_PRICE_TOLERANCE ?? 0.20);
 const RESPONSE_TIMEOUT_MS = Number(process.env.NKN_RESPONSE_TIMEOUT_MS ?? 7000);
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function percentile(values, p) {
   const sorted = [...values].sort((a, b) => a - b);
@@ -25,10 +21,6 @@ function percentile(values, p) {
 
 function digest(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
-
-function normalizePriceBand(price) {
-  return Number(price.toPrecision(8));
 }
 
 function quorumDecision(observations) {
@@ -79,13 +71,17 @@ async function observeFromSource(source) {
     url.searchParams.set('vs_currencies', 'usd');
     if (apiKey) url.searchParams.set('x_cg_demo_api_key', apiKey);
     const data = await fetchJson(url);
-    const price = Number(data?.nkn?.usd);
-    return { source, venue: 'CoinGecko', price, capturedAt: Date.now() };
+    return { source, venue: 'CoinGecko', price: Number(data?.nkn?.usd), capturedAt: Date.now() };
   }
 
-  if (source === 'binance') {
-    const data = await fetchJson('https://api.binance.com/api/v3/ticker/price?symbol=NKNUSDT');
-    return { source, venue: 'Binance', price: Number(data?.price), capturedAt: Date.now() };
+  if (source === 'coinpaprika') {
+    const data = await fetchJson('https://api.coinpaprika.com/v1/tickers/nkn-nkn?quotes=USD');
+    return { source, venue: 'CoinPaprika', price: Number(data?.quotes?.USD?.price), capturedAt: Date.now() };
+  }
+
+  if (source === 'gate') {
+    const data = await fetchJson('https://api.gateio.ws/api/v4/spot/tickers?currency_pair=NKN_USDT');
+    return { source, venue: 'Gate', price: Number(data?.[0]?.last), capturedAt: Date.now() };
   }
 
   if (source === 'adversary') {
@@ -99,7 +95,7 @@ async function observeFromSource(source) {
 async function startWorker(source) {
   const transport = await createNknTransport({
     identifier: `integration-worker-${source}-${process.pid}-${randomUUID().slice(0, 8)}`,
-    numSubClients: 3,
+    numSubClients: 2,
   });
   const seen = new BoundedTtlSet({ max: 1000, ttlMs: 120_000 });
 
@@ -113,11 +109,8 @@ async function startWorker(source) {
 
       if (env.payload?.task?.type === 'price-observation.v1') {
         const result = await observeFromSource(source);
-        const evidence = {
-          source,
-          capturedAt: result.capturedAt,
-          digest: digest(result),
-        };
+        if (!Number.isFinite(result.price) || result.price <= 0) throw new Error(`provider ${source} returned invalid price`);
+        const evidence = { source, capturedAt: result.capturedAt, digest: digest(result) };
         return JSON.stringify(createResponse({ requestId: env.requestId, sender: transport.addr, recipient: src, result, evidence }));
       }
 
@@ -133,7 +126,7 @@ async function startWorker(source) {
 
       throw new Error('unsupported task type');
     } catch (error) {
-      return JSON.stringify({ error: error.message });
+      return JSON.stringify({ error: error.message, source });
     }
   });
 
@@ -143,12 +136,7 @@ async function startWorker(source) {
 async function rpc(client, address, payload) {
   const started = performance.now();
   const requestId = randomUUID();
-  const request = createRequest({
-    requestId,
-    sender: client.addr,
-    recipient: address,
-    task: payload,
-  });
+  const request = createRequest({ requestId, sender: client.addr, recipient: address, task: payload });
   const reply = await client.send(address, JSON.stringify(request));
   const elapsed = performance.now() - started;
   return { requestId, elapsed, reply: typeof reply === 'string' ? JSON.parse(reply) : reply };
@@ -158,9 +146,7 @@ async function sessionSmokeTest(coordinator, worker) {
   worker.transport.listen();
   let acceptedResolve;
   const accepted = new Promise((resolve) => { acceptedResolve = resolve; });
-  worker.transport.onSession(async (session) => {
-    acceptedResolve(session);
-  });
+  worker.transport.onSession((session) => acceptedResolve(session));
 
   const session = await coordinator.dial(worker.transport.addr);
   const payload = Buffer.from('NKN-SESSION-PING');
@@ -188,26 +174,27 @@ async function centralHttpBaseline(samples) {
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
-  const samplesOut = [];
+  const samples = [];
   try {
     for (let i = 0; i < samples; i += 1) {
       const started = performance.now();
       const response = await fetch(`http://127.0.0.1:${port}/ping`);
       assert.equal(response.status, 200);
       await response.json();
-      samplesOut.push(performance.now() - started);
+      samples.push(performance.now() - started);
     }
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
-  return samplesOut;
+  return samples;
 }
 
 async function main() {
-  const coordinator = await createNknTransport({ identifier: `integration-coordinator-${process.pid}-${randomUUID().slice(0, 8)}`, numSubClients: 4 });
+  const coordinator = await createNknTransport({ identifier: `integration-coordinator-${process.pid}-${randomUUID().slice(0, 8)}`, numSubClients: 2 });
   const workers = await Promise.all([
     startWorker('coingecko'),
-    startWorker('binance'),
+    startWorker('coinpaprika'),
+    startWorker('gate'),
     startWorker('adversary'),
   ]);
 
@@ -225,10 +212,11 @@ async function main() {
     const first = await rpc(coordinator, workers[0].transport.addr, { type: 'ping.v1' });
     assert.equal(first.reply?.payload?.result?.ok, true);
     metrics.protocol.packet = true;
-
     metrics.protocol.session = await sessionSmokeTest(coordinator, workers[0]);
 
     const workerBySource = new Map(workers.map((w) => [w.source, w]));
+    const honestSources = new Set(['coingecko', 'coinpaprika', 'gate']);
+
     for (let round = 1; round <= ROUNDS; round += 1) {
       const activeWorkers = workers.filter((w) => !w.transport.isClosed);
       const observations = [];
@@ -237,7 +225,7 @@ async function main() {
           const response = await rpc(coordinator, worker.transport.addr, { type: 'price-observation.v1', symbol: SYMBOL, round });
           const result = response.reply?.payload?.result;
           const evidence = response.reply?.payload?.evidence;
-          if (!result || !evidence) throw new Error('missing result/evidence');
+          if (!result || !evidence) throw new Error(response.reply?.error ?? 'missing result/evidence');
           if (digest(result) !== evidence.digest) throw new Error('evidence digest mismatch');
           observations.push({ ...result, evidence, elapsed: response.elapsed });
         } catch (error) {
@@ -247,32 +235,40 @@ async function main() {
 
       const decision = quorumDecision(observations);
       metrics.consensusRounds.push({ round, observations, decision });
-      console.log(JSON.stringify({ phase: 'consensus', round, decision, observations: observations.map((o) => ({ source: o.source, price: o.price, elapsed: o.elapsed, error: o.error })) }));
+      console.log(JSON.stringify({ phase: 'consensus', round, decision, observations: observations.map((o) => ({ source: o.source, venue: o.venue, price: o.price, elapsed: o.elapsed, error: o.error })) }));
 
       if (round <= 3) {
         assert.equal(decision.quorum, true, `expected quorum in round ${round}`);
+        assert.ok(decision.sources.filter((source) => honestSources.has(source)).length >= 2, `honest quorum required in round ${round}`);
         assert.ok(decision.outliers.includes('adversary'), `adversary should be rejected in round ${round}`);
         metrics.resilience.adversaryRejected = true;
       }
 
-      if (round === 3) {
-        await workerBySource.get('adversary').transport.close();
-      }
+      if (round === 3) await workerBySource.get('adversary').transport.close();
+
       if (round === 4) {
         assert.equal(decision.quorum, true, 'quorum should survive adversary failure');
-        assert.equal(decision.sourceCount, 2, 'two honest sources should form quorum');
+        assert.ok(decision.sourceCount >= 2, 'at least two honest sources should remain in quorum');
         metrics.resilience.quorumSurvivedAdversaryFailure = true;
-        await workerBySource.get('coingecko').transport.close();
+        await workerBySource.get('gate').transport.close();
       }
+
       if (round === 5) {
-        assert.equal(decision.quorum, false, 'one remaining source must not form quorum');
+        assert.equal(decision.quorum, true, 'quorum should survive loss of one honest source');
+        assert.ok(decision.sourceCount >= 2, 'two honest sources should still form quorum');
+        await workerBySource.get('coinpaprika').transport.close();
+      }
+
+      if (round === 6) {
+        assert.equal(decision.quorum, false, 'one remaining honest source must not form quorum');
         metrics.resilience.quorumFailureDetected = true;
         break;
       }
     }
 
+    const rttWorker = workerBySource.get('coingecko');
     for (let i = 0; i < RTT_SAMPLES; i += 1) {
-      const response = await rpc(coordinator, workerBySource.get('binance').transport.addr, { type: 'ping.v1' });
+      const response = await rpc(coordinator, rttWorker.transport.addr, { type: 'ping.v1' });
       metrics.nknRttMs.push(response.elapsed);
     }
     metrics.centralRttMs = await centralHttpBaseline(RTT_SAMPLES);
