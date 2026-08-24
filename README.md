@@ -28,7 +28,7 @@ The project now freezes a transport-agnostic protocol core alongside the NKN ada
 
 See [`protocol/README.md`](protocol/README.md), [`docs/PROTOCOL.md`](docs/PROTOCOL.md), and [`vectors/protocol-v1-canonical.json`](vectors/protocol-v1-canonical.json).
 
-NKN transport remains an adapter layer. The official NKN Go SDK provides MultiClient and session primitives suitable for a Go transport implementation, while the protocol package stays language- and transport-agnostic. citeturn398273search0
+NKN transport remains an adapter layer. The official NKN Go SDK provides MultiClient and session primitives suitable for a Go transport implementation, while the protocol package stays language- and transport-agnostic.
 
 ## Five task domains
 
