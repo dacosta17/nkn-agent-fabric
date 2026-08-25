@@ -39,6 +39,12 @@ jobs:
         run: npm run test:domains
 
       - name: Attested agent-market integration
+        env:
+          NKN_MARKET_ALLOW_UNAVAILABLE: true
+          NKN_MARKET_RPC_ATTEMPTS: 2
+          NKN_MARKET_RPC_BACKOFF_MS: 500
+          NKN_CONNECT_TIMEOUT_MS: 8000
+          NKN_CONNECT_ATTEMPTS: 1
         run: |
           set -o pipefail
           npm run integration:market | tee nkn-attested-market-report.log
