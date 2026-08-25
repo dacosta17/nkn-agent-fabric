@@ -1,7 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { randomUUID } from 'node:crypto';
 import { createNknTransport } from '../lib/nkn-transport.js';
-import { mapConcurrent } from '../lib/concurrency.js';
 import { createRequest, createResponse, parseEnvelope } from '../lib/runtime.js';
 import { percentile, settleAll, summarizeSamples, validateLatencyConfig, withTimeout } from '../lib/latency-benchmark.js';
 
@@ -24,16 +23,23 @@ async function rpc(client, address, payload) {
 
 async function runFanout(addresses, coordinator, payload, mode) {
   const started = performance.now();
-  const results = mode === 'parallel'
-    ? await settleAll(addresses, (address) => rpc(coordinator, address, payload))
-    : await settleAll(addresses, async (address) => rpc(coordinator, address, payload));
+  const results = [];
+
+  if (mode === 'parallel') {
+    results.push(...await settleAll(addresses, (address) => rpc(coordinator, address, payload)));
+  } else {
+    for (let index = 0; index < addresses.length; index += 1) {
+      try {
+        results.push({ index, ok: true, value: await rpc(coordinator, addresses[index], payload) });
+      } catch (error) {
+        results.push({ index, ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  }
+
   const elapsedMs = performance.now() - started;
   const successful = results.filter((result) => result.ok).length;
-  return {
-    ok: successful === addresses.length,
-    elapsedMs,
-    results,
-  };
+  return { ok: successful === addresses.length, elapsedMs, results };
 }
 
 async function main() {
@@ -71,12 +77,8 @@ async function main() {
     const overallRequests = [...serial, ...parallel];
     const overallSuccessRatePct = Number(((overallRequests.filter((sample) => sample.ok).length / overallRequests.length) * 100).toFixed(2));
 
-    if (!serialReport.successful || !parallelReport.successful) {
-      throw new Error('latency benchmark produced no complete successful samples');
-    }
-    if (overallSuccessRatePct < MIN_SUCCESS_RATE_PCT) {
-      throw new Error(`NKN latency success rate ${overallSuccessRatePct}% is below required ${MIN_SUCCESS_RATE_PCT}%`);
-    }
+    if (!serialReport.successful || !parallelReport.successful) throw new Error('latency benchmark produced no complete successful samples');
+    if (overallSuccessRatePct < MIN_SUCCESS_RATE_PCT) throw new Error(`NKN latency success rate ${overallSuccessRatePct}% is below required ${MIN_SUCCESS_RATE_PCT}%`);
 
     const serialP50 = percentile(serial.filter((sample) => sample.ok).map((sample) => sample.elapsedMs), 50);
     const parallelP50 = percentile(parallel.filter((sample) => sample.ok).map((sample) => sample.elapsedMs), 50);
