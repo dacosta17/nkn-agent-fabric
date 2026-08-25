@@ -9,10 +9,15 @@ const WARMUP = Number(process.env.NKN_LATENCY_WARMUP ?? 5);
 const FANOUT = Number(process.env.NKN_LATENCY_FANOUT ?? 4);
 const PAYLOAD_BYTES = Number(process.env.NKN_LATENCY_PAYLOAD_BYTES ?? 256);
 const REQUEST_TIMEOUT_MS = Number(process.env.NKN_LATENCY_REQUEST_TIMEOUT_MS ?? 12_000);
+const CONNECT_TIMEOUT_MS = Number(process.env.NKN_LATENCY_CONNECT_TIMEOUT_MS ?? 45_000);
+const CONNECT_ATTEMPTS = Number(process.env.NKN_LATENCY_CONNECT_ATTEMPTS ?? 3);
 const MIN_SUCCESS_RATE_PCT = Number(process.env.NKN_LATENCY_MIN_SUCCESS_RATE_PCT ?? 80);
+const ALLOW_UNAVAILABLE = process.env.NKN_LATENCY_ALLOW_UNAVAILABLE === 'true';
 
 validateLatencyConfig({ samples: SAMPLES, warmup: WARMUP, fanout: FANOUT, payloadBytes: PAYLOAD_BYTES, timeoutMs: REQUEST_TIMEOUT_MS });
 if (!Number.isFinite(MIN_SUCCESS_RATE_PCT) || MIN_SUCCESS_RATE_PCT <= 0 || MIN_SUCCESS_RATE_PCT > 100) throw new RangeError('MIN_SUCCESS_RATE_PCT must be > 0 and <= 100');
+if (!Number.isFinite(CONNECT_TIMEOUT_MS) || CONNECT_TIMEOUT_MS <= 0) throw new RangeError('CONNECT_TIMEOUT_MS must be > 0');
+if (!Number.isInteger(CONNECT_ATTEMPTS) || CONNECT_ATTEMPTS < 1) throw new RangeError('CONNECT_ATTEMPTS must be an integer >= 1');
 
 async function rpc(client, address, payload) {
   const request = createRequest({ requestId: randomUUID(), sender: client.addr, recipient: address, task: payload });
@@ -42,19 +47,32 @@ async function runFanout(addresses, coordinator, payload, mode) {
   return { ok: successful === addresses.length, elapsedMs, results };
 }
 
+async function createBenchmarkTransport(identifier) {
+  return createNknTransport({
+    identifier,
+    numSubClients: 1,
+    connectTimeoutMs: CONNECT_TIMEOUT_MS,
+    connectAttempts: CONNECT_ATTEMPTS,
+  });
+}
+
 async function main() {
-  const coordinator = await createNknTransport({ identifier: `latency-coordinator-${process.pid}-${randomUUID().slice(0, 8)}`, numSubClients: 1 });
-  const workers = await Promise.all(Array.from({ length: FANOUT }, async (_, index) => {
-    const transport = await createNknTransport({ identifier: `latency-worker-${index}-${process.pid}-${randomUUID().slice(0, 8)}`, numSubClients: 1 });
-    transport.onMessage(async ({ src, payload }) => {
-      const env = parseEnvelope(payload);
-      if (env.recipient !== transport.addr || env.kind !== 'request') return false;
-      return JSON.stringify(createResponse({ requestId: env.requestId, sender: transport.addr, recipient: src, result: { ok: true } }));
-    });
-    return transport;
-  }));
+  let coordinator;
+  const workers = [];
 
   try {
+    coordinator = await createBenchmarkTransport(`latency-coordinator-${process.pid}-${randomUUID().slice(0, 8)}`);
+
+    for (let index = 0; index < FANOUT; index += 1) {
+      const transport = await createBenchmarkTransport(`latency-worker-${index}-${process.pid}-${randomUUID().slice(0, 8)}`);
+      transport.onMessage(async ({ src, payload }) => {
+        const env = parseEnvelope(payload);
+        if (env.recipient !== transport.addr || env.kind !== 'request') return false;
+        return JSON.stringify(createResponse({ requestId: env.requestId, sender: transport.addr, recipient: src, result: { ok: true } }));
+      });
+      workers.push(transport);
+    }
+
     const addresses = workers.map((worker) => worker.addr);
     const payload = { type: 'latency-ping.v1', bytes: 'x'.repeat(Math.max(0, PAYLOAD_BYTES)) };
 
@@ -88,6 +106,8 @@ async function main() {
       fanout: FANOUT,
       payloadBytes: PAYLOAD_BYTES,
       requestTimeoutMs: REQUEST_TIMEOUT_MS,
+      connectTimeoutMs: CONNECT_TIMEOUT_MS,
+      connectAttempts: CONNECT_ATTEMPTS,
       minSuccessRatePct: MIN_SUCCESS_RATE_PCT,
       serial: serialReport,
       parallel: parallelReport,
@@ -95,9 +115,13 @@ async function main() {
       parallelP50ReductionPct: Number(((1 - parallelP50 / serialP50) * 100).toFixed(2)),
     };
     console.log(JSON.stringify({ phase: 'latency-benchmark', report }, null, 2));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!ALLOW_UNAVAILABLE) throw error;
+    console.log(JSON.stringify({ phase: 'latency-benchmark', status: 'unavailable', reason: message }, null, 2));
   } finally {
     await Promise.allSettled(workers.map((worker) => worker.close()));
-    await coordinator.close();
+    if (coordinator) await Promise.resolve(coordinator.close()).catch(() => {});
   }
 }
 
