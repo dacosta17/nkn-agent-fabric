@@ -8,6 +8,19 @@ Research-grade open-source protocol POC for **verifiable independent agent execu
 
 This is deliberately **not** an agent marketplace, trading bot, price-pump system, or autonomous wallet executor.
 
+## 60-second demo
+
+The fastest way to see the thesis is the live NKN agent-network demo:
+
+```bash
+npm ci
+npm run demo:nkn
+```
+
+It starts a coordinator and four live NKN workers: three independent market observers plus a deterministic Byzantine observer. The demo shows packet/session connectivity, signed evidence, quorum formation, Byzantine rejection, resilience after worker loss, explicit quorum failure when independence becomes insufficient, and NKN latency alongside a local HTTP lower-bound baseline.
+
+See [`docs/DEMO.md`](docs/DEMO.md) for the exact claims and security boundaries.
+
 ## Why this project exists
 
 NKN already has public examples for P2P messaging, remote connectivity, file transfer, and AI-agent messaging. The interesting question here is one layer above transport:
@@ -38,13 +51,7 @@ The strongest project demonstration is a live NKN consensus flow:
              verified result
 ```
 
-Run it with:
-
-```bash
-npm run integration:agent-consensus
-```
-
-The demo uses live market-data agents over NKN and requires diversity across operator, provider, and source-group identities. See [`docs/CONSENSUS_DEMO.md`](docs/CONSENSUS_DEMO.md).
+The underlying integration can also be run directly with `npm run integration:agent-consensus`.
 
 **Security boundary:** distinct operator IDs are policy inputs, not permissionless Sybil resistance. NKN provides decentralized addressability and peer communication; it does not by itself prove that two operators are controlled by different real-world entities. Production deployments need an operator registry, attestations, stake/economic bonding, or an equivalent mechanism.
 
@@ -118,57 +125,3 @@ Run the live NKN integration from a network-enabled environment:
 npm run integration:nkn
 npm run integration:agent-consensus
 ```
-
-Run the attested market-data example:
-
-```bash
-npm run integration:market
-```
-
-The live tests use public endpoints. Provider rate limits are treated as provider conditions, not as evidence that NKN itself failed.
-
-## Evidence and security model
-
-A signature proves **who made a claim**. It does not prove the claim is true.
-
-The application therefore separates:
-
-1. NKN transport authenticity/encryption;
-2. application identity signatures;
-3. external evidence provenance;
-4. freshness and replay checks;
-5. deterministic domain policy;
-6. registered operator/provider/source diversity;
-7. quorum and Byzantine rejection.
-
-See [`docs/PROTOCOL.md`](docs/PROTOCOL.md), [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md), and [`docs/OPERATOR_REGISTRY.md`](docs/OPERATOR_REGISTRY.md).
-
-## Public benchmark standard
-
-The current localhost comparison is intentionally only a lower bound. A serious performance paper should compare NKN against a centralized multi-region transport under identical topology, payloads, concurrency, retry policy, and regions.
-
-See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
-
-## Current limitations
-
-This repository does **not** claim to solve permissionless identity, Sybil resistance, collusion, censorship resistance, economic finality, or production-grade autonomous DeFi execution. Reputation is not yet a security primitive, and the coordinator remains centralized in the current POC.
-
-## Roadmap
-
-1. signed registry snapshots, revocation and key rotation;
-2. portable signed reputation receipts;
-3. multi-region WAN benchmarks;
-4. collusion/Sybil experiments and source-correlation analysis;
-5. economic security with escrow/stake/dispute experiments;
-6. NKN Go transport adapter and cross-language live interoperability;
-7. optional NKN-denominated settlement after the verification layer is independently validated.
-
-See [`docs/ROADMAP.md`](docs/ROADMAP.md).
-
-## License
-
-Apache-2.0. See [`LICENSE`](LICENSE).
-
-## Disclaimer
-
-This is experimental research software. Do not use it with production private keys, unattended financial authority, or safety-critical infrastructure without an independent review.

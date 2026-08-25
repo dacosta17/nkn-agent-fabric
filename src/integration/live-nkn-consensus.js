@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import nkn from 'nkn-sdk';
 import { createNknTransport } from '../lib/nkn-transport.js';
 import { createRequest, createResponse, parseEnvelope, BoundedTtlSet } from '../lib/runtime.js';
 import { decodeRpcReply } from './nkn-rpc-decode.js';
@@ -21,9 +20,7 @@ function percentile(values, p) {
   return Number(sorted[index].toFixed(2));
 }
 
-function digest(value) {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
+function digest(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 
 function quorumDecision(observations, now = Date.now()) {
   const valid = observations.filter((o) => Number.isFinite(o.price) && o.price > 0 && Number.isInteger(o.capturedAt) && now - o.capturedAt <= MAX_OBSERVATION_AGE_MS);
@@ -108,8 +105,7 @@ async function rpc(client, address, payload) {
   const requestId = randomUUID();
   const request = createRequest({ requestId, sender: client.addr, recipient: address, task: payload });
   const rawReply = await client.send(address, JSON.stringify(request));
-  const elapsed = performance.now() - started;
-  return { requestId, elapsed, reply: decodeRpcReply(rawReply) };
+  return { requestId, elapsed: performance.now() - started, reply: decodeRpcReply(rawReply) };
 }
 
 async function sessionSmokeTest(coordinator, worker) {
@@ -145,6 +141,23 @@ async function centralHttpBaseline(sampleCount) {
   return timings;
 }
 
+async function collectRoundObservations(coordinator, activeWorkers, round) {
+  // Consensus semantics are unchanged; observations are collected concurrently so one slow NKN path cannot make earlier observations stale before quorum evaluation.
+  const results = await Promise.all(activeWorkers.map(async (worker) => {
+    try {
+      const response = await rpc(coordinator, worker.transport.addr, { type: 'price-observation.v1', symbol: SYMBOL, round });
+      const result = response.reply?.payload?.result;
+      const evidence = response.reply?.payload?.evidence;
+      if (!result || !evidence) throw new Error(response.reply?.error ?? 'missing result/evidence');
+      if (digest(result) !== evidence.digest) throw new Error('evidence digest mismatch');
+      return { ...result, evidence, elapsed: response.elapsed };
+    } catch (error) {
+      return { source: worker.source, error: error.message };
+    }
+  }));
+  return results;
+}
+
 async function main() {
   const coordinator = await createNknTransport({ identifier: `integration-coordinator-${process.pid}-${randomUUID().slice(0, 8)}`, numSubClients: 2 });
   const workers = await Promise.all([startWorker('coingecko'), startWorker('coinpaprika'), startWorker('gate'), startWorker('adversary')]);
@@ -152,38 +165,60 @@ async function main() {
   try {
     console.log(JSON.stringify({ phase: 'ready', coordinator: coordinator.addr, workers: workers.map((w) => ({ source: w.source, address: w.transport.addr })) }));
     const first = await rpc(coordinator, workers[0].transport.addr, { type: 'ping.v1' });
-    assert.equal(first.reply?.payload?.result?.ok, true); metrics.protocol.packet = true; metrics.protocol.session = await sessionSmokeTest(coordinator, workers[0]);
-    const workerBySource = new Map(workers.map((w) => [w.source, w])); const honestSources = new Set(['coingecko', 'coinpaprika', 'gate']);
+    assert.equal(first.reply?.payload?.result?.ok, true);
+    metrics.protocol.packet = true;
+    metrics.protocol.session = await sessionSmokeTest(coordinator, workers[0]);
+    const workerBySource = new Map(workers.map((w) => [w.source, w]));
+    const honestSources = new Set(['coingecko', 'coinpaprika', 'gate']);
     for (let round = 1; round <= ROUNDS; round += 1) {
-      const activeWorkers = workers.filter((w) => !w.transport.isClosed); const observations = [];
-      for (const worker of activeWorkers) {
-        try {
-          const response = await rpc(coordinator, worker.transport.addr, { type: 'price-observation.v1', symbol: SYMBOL, round });
-          const result = response.reply?.payload?.result; const evidence = response.reply?.payload?.evidence;
-          if (!result || !evidence) throw new Error(response.reply?.error ?? 'missing result/evidence');
-          if (digest(result) !== evidence.digest) throw new Error('evidence digest mismatch');
-          observations.push({ ...result, evidence, elapsed: response.elapsed });
-        } catch (error) { observations.push({ source: worker.source, error: error.message }); }
-      }
-      const decision = quorumDecision(observations); metrics.consensusRounds.push({ round, observations, decision });
+      const activeWorkers = workers.filter((w) => !w.transport.isClosed);
+      const observations = await collectRoundObservations(coordinator, activeWorkers, round);
+      const decision = quorumDecision(observations);
+      metrics.consensusRounds.push({ round, observations, decision });
       console.log(JSON.stringify({ phase: 'consensus', round, decision, observations: observations.map((o) => ({ source: o.source, venue: o.venue, price: o.price, capturedAt: o.capturedAt, elapsed: o.elapsed, degraded: o.degraded, error: o.error })) }));
       if (round <= 3) {
         assert.equal(decision.quorum, true, `expected quorum in round ${round}`);
         assert.ok(decision.sources.filter((source) => honestSources.has(source)).length >= 2, `honest quorum required in round ${round}`);
-        if (observations.some((o) => o.source === 'adversary' && Number.isFinite(o.price))) { assert.ok(decision.outliers.includes('adversary'), `adversary should be rejected in round ${round}`); metrics.resilience.adversaryRejected = true; }
+        if (observations.some((o) => o.source === 'adversary' && Number.isFinite(o.price))) {
+          assert.ok(decision.outliers.includes('adversary'), `adversary should be rejected in round ${round}`);
+          metrics.resilience.adversaryRejected = true;
+        }
       }
       if (round === 3) await workerBySource.get('adversary').transport.close();
-      if (round === 4) { assert.equal(decision.quorum, true, 'quorum should survive adversary failure'); assert.ok(decision.sourceCount >= 2, 'at least two honest sources should remain in quorum'); metrics.resilience.quorumSurvivedAdversaryFailure = true; await workerBySource.get('gate').transport.close(); }
-      if (round === 5) { assert.equal(decision.quorum, true, 'quorum should survive loss of one honest source'); assert.ok(decision.sourceCount >= 2, 'two honest sources should still form quorum'); await workerBySource.get('coinpaprika').transport.close(); }
-      if (round === 6) { assert.equal(decision.quorum, false, 'one remaining honest source must not form quorum'); metrics.resilience.quorumFailureDetected = true; break; }
+      if (round === 4) {
+        assert.equal(decision.quorum, true, 'quorum should survive adversary failure');
+        assert.ok(decision.sourceCount >= 2, 'at least two honest sources should remain in quorum');
+        metrics.resilience.quorumSurvivedAdversaryFailure = true;
+        await workerBySource.get('gate').transport.close();
+      }
+      if (round === 5) {
+        assert.equal(decision.quorum, true, 'quorum should survive loss of one honest source');
+        assert.ok(decision.sourceCount >= 2, 'two honest sources should still form quorum');
+        await workerBySource.get('coinpaprika').transport.close();
+      }
+      if (round === 6) {
+        assert.equal(decision.quorum, false, 'one remaining honest source must not form quorum');
+        metrics.resilience.quorumFailureDetected = true;
+        break;
+      }
     }
     const rttWorker = workerBySource.get('coingecko');
-    for (let i = 0; i < RTT_SAMPLES; i += 1) { const response = await rpc(coordinator, rttWorker.transport.addr, { type: 'ping.v1' }); metrics.nknRttMs.push(response.elapsed); }
+    for (let i = 0; i < RTT_SAMPLES; i += 1) {
+      const response = await rpc(coordinator, rttWorker.transport.addr, { type: 'ping.v1' });
+      metrics.nknRttMs.push(response.elapsed);
+    }
     metrics.centralRttMs = await centralHttpBaseline(RTT_SAMPLES);
     const report = { timestamp: new Date().toISOString(), symbol: SYMBOL, tolerance: TOLERANCE, maxObservationAgeMs: MAX_OBSERVATION_AGE_MS, rounds: metrics.consensusRounds.length, protocol: metrics.protocol, resilience: metrics.resilience, latencyMs: { nkn: { p50: percentile(metrics.nknRttMs, 50), p95: percentile(metrics.nknRttMs, 95), p99: percentile(metrics.nknRttMs, 99) }, centralizedLocalHttp: { p50: percentile(metrics.centralRttMs, 50), p95: percentile(metrics.centralRttMs, 95), p99: percentile(metrics.centralRttMs, 99) } }, consensus: metrics.consensusRounds };
-    assert.equal(metrics.protocol.packet, true); assert.equal(metrics.protocol.session, true); assert.equal(metrics.resilience.adversaryRejected, true); assert.equal(metrics.resilience.quorumSurvivedAdversaryFailure, true); assert.equal(metrics.resilience.quorumFailureDetected, true);
+    assert.equal(metrics.protocol.packet, true);
+    assert.equal(metrics.protocol.session, true);
+    assert.equal(metrics.resilience.adversaryRejected, true);
+    assert.equal(metrics.resilience.quorumSurvivedAdversaryFailure, true);
+    assert.equal(metrics.resilience.quorumFailureDetected, true);
     console.log(JSON.stringify({ phase: 'result', report }, null, 2));
-  } finally { await Promise.allSettled(workers.map((w) => w.transport.close())); await coordinator.close(); }
+  } finally {
+    await Promise.allSettled(workers.map((w) => w.transport.close()));
+    await coordinator.close();
+  }
 }
 
 main().catch((error) => { console.error(JSON.stringify({ phase: 'failed', error: error.stack ?? error.message })); process.exitCode = 1; });

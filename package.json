@@ -17,6 +17,7 @@
     "integration:nkn": "node src/integration/live-nkn-consensus.js",
     "integration:agent-consensus": "node src/integration/live-agent-consensus.js",
     "integration:market": "node src/integration/live-attested-market.js",
+    "demo:nkn": "node src/demo/nkn-agent-network-demo.js",
     "agent:coordinator": "node src/agents/coordinator.js",
     "agent:worker": "node src/agents/worker.js",
     "agent:auditor": "node src/agents/auditor.js",
