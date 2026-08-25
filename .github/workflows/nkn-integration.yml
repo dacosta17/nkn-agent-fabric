@@ -43,6 +43,16 @@ jobs:
           set -o pipefail
           npm run integration:market | tee nkn-attested-market-report.log
 
+      - name: Warm parallel NKN latency benchmark
+        env:
+          NKN_LATENCY_SAMPLES: 20
+          NKN_LATENCY_WARMUP: 5
+          NKN_LATENCY_FANOUT: 4
+          NKN_LATENCY_PAYLOAD_BYTES: 256
+        run: |
+          set -o pipefail
+          timeout 120s npm run benchmark:nkn:fanout | tee nkn-latency-report.log
+
       - name: Live NKN adversarial consensus integration
         env:
           COINGECKO_DEMO_API_KEY: ${{ secrets.COINGECKO_DEMO_API_KEY }}
@@ -59,6 +69,8 @@ jobs:
         run: |
           echo '## Attested agent-market report'
           cat nkn-attested-market-report.log || true
+          echo '## NKN latency report'
+          cat nkn-latency-report.log || true
           echo '## NKN consensus report'
           cat nkn-integration-report.log || true
 
@@ -69,5 +81,6 @@ jobs:
           name: nkn-live-integration-reports
           path: |
             nkn-attested-market-report.log
+            nkn-latency-report.log
             nkn-integration-report.log
           if-no-files-found: warn
