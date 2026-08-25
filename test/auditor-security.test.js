@@ -32,3 +32,21 @@ test('independent verifier rejects a tampered result bundle', () => {
   const tampered = { ...result, quorum: false };
   assert.equal(verifyQuorumResult(tampered, { expectedPeers: ['peer-a', 'peer-b'] }).valid, false);
 });
+
+test('independent verifier recomputes a quorum decision instead of trusting metadata', () => {
+  const result = auditQuorum({ requestId: 'r5', responses: [response('peer-a', 1, 'op-a', 'provider-a'), response('peer-b', 1.01, 'op-b', 'provider-b')], expectedPeers: ['peer-a', 'peer-b'], elapsedMs: 1 });
+  const forged = { ...result, quorum: false, resultDigest: digest({
+    version: result.version,
+    type: result.type,
+    requestId: result.requestId,
+    quorum: false,
+    observationCount: result.observationCount,
+    requiredPeers: result.requiredPeers,
+    diversity: result.diversity,
+    independence: result.independence,
+    relativeSpread: result.relativeSpread,
+    elapsedMs: result.elapsedMs,
+    observations: result.observations,
+  }) };
+  assert.equal(verifyQuorumResult(forged, { expectedPeers: ['peer-a', 'peer-b'] }).valid, false);
+});
