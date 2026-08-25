@@ -48,6 +48,12 @@ The demo uses live market-data agents over NKN and requires diversity across ope
 
 **Security boundary:** distinct operator IDs are policy inputs, not permissionless Sybil resistance. NKN provides decentralized addressability and peer communication; it does not by itself prove that two operators are controlled by different real-world entities. Production deployments need an operator registry, attestations, stake/economic bonding, or an equivalent mechanism.
 
+## Operator identity layer
+
+The next protocol layer is a signed operator registry. `src/lib/operator-registry.js` defines versioned Ed25519-signed operator records that bind an operator identity to an application public key and one or more NKN addresses. Verifiers can check membership before counting an agent toward an independence quorum.
+
+This registry is an **identity primitive, not permissionless Sybil resistance**. It proves membership in a registry snapshot; it does not prove that two registered identities are controlled by independent real-world entities. See [`docs/OPERATOR_REGISTRY.md`](docs/OPERATOR_REGISTRY.md).
+
 ## Reference protocol v1
 
 The project now freezes a transport-agnostic protocol core alongside the NKN adapters:
@@ -86,6 +92,7 @@ All five domains reuse the same capability, quote, attestation, provenance, fres
 - freshness and bounded replay protection;
 - independent-provider and operator-diversity checks;
 - explicit same-operator/Sybil-policy failure cases;
+- signed operator registry records and membership checks;
 - Byzantine/outlier rejection;
 - failure injection and explicit quorum-failure assertions;
 - p50/p95/p99 NKN RTT measurement;
@@ -131,10 +138,10 @@ The application therefore separates:
 3. external evidence provenance;
 4. freshness and replay checks;
 5. deterministic domain policy;
-6. operator/provider/source diversity;
+6. registered operator/provider/source diversity;
 7. quorum and Byzantine rejection.
 
-See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+See [`docs/PROTOCOL.md`](docs/PROTOCOL.md), [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md), and [`docs/OPERATOR_REGISTRY.md`](docs/OPERATOR_REGISTRY.md).
 
 ## Public benchmark standard
 
@@ -148,7 +155,7 @@ This repository does **not** claim to solve permissionless identity, Sybil resis
 
 ## Roadmap
 
-1. permissionless capability discovery;
+1. signed registry snapshots, revocation and key rotation;
 2. portable signed reputation receipts;
 3. multi-region WAN benchmarks;
 4. collusion/Sybil experiments and source-correlation analysis;
