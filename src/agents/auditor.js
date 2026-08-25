@@ -1,9 +1,10 @@
 import { digest, stableJson } from '../lib/canonical.js';
 import { validateObservation } from '../lib/tasks.js';
+import { assessIndependence } from '../lib/independence-policy.js';
 
 function unique(values) { return new Set(values).size === values.length; }
 
-export function auditQuorum({ requestId, responses, elapsedMs, expectedPeers = [], minDistinctOperators = 2, minDistinctProviders = 2, minDistinctSourceGroups = 2 }) {
+export function auditQuorum({ requestId, responses, elapsedMs, expectedPeers = [], minDistinctOperators = 2, minDistinctProviders = 2, minDistinctSourceGroups = 2, trustedOperatorIds = null }) {
   const peerIds = responses.map(({ peer }) => peer).sort();
   const requiredPeers = [...expectedPeers].sort();
   if (requiredPeers.length && (peerIds.length !== requiredPeers.length || peerIds.some((peer, i) => peer !== requiredPeers[i]))) {
@@ -25,22 +26,15 @@ export function auditQuorum({ requestId, responses, elapsedMs, expectedPeers = [
     return { peer, observation, evidence: { ...value.evidence, operatorId, providerId, sourceGroup } };
   });
 
-  const operators = observations.map((x) => x.evidence.operatorId);
-  const providers = observations.map((x) => x.evidence.providerId);
-  const sourceGroups = observations.map((x) => x.evidence.sourceGroup);
-  const diversity = {
-    distinctOperators: new Set(operators).size,
-    distinctProviders: new Set(providers).size,
-    distinctSourceGroups: new Set(sourceGroups).size,
-  };
-  const diversitySatisfied = diversity.distinctOperators >= minDistinctOperators
-    && diversity.distinctProviders >= minDistinctProviders
-    && diversity.distinctSourceGroups >= minDistinctSourceGroups;
+  const independence = assessIndependence(observations, {
+    minDistinctOperators,
+    minDistinctProviders,
+    minDistinctSourceGroups,
+    trustedOperatorIds,
+  });
 
-  const prices = observations.map((x) => x.observation.price);
-  const min = Math.min(...prices); const max = Math.max(...prices);
-  const relativeSpread = min === 0 ? Infinity : (max - min) / min;
-  const quorum = observations.length >= 2 && diversitySatisfied && relativeSpread <= 0.05;
+  const relativeSpread = calculateRelativeSpread(observations);
+  const quorum = observations.length >= 2 && independence.independent && relativeSpread <= 0.05;
   const result = {
     version: 1,
     type: 'verification-result.v1',
@@ -48,7 +42,8 @@ export function auditQuorum({ requestId, responses, elapsedMs, expectedPeers = [
     quorum,
     observationCount: observations.length,
     requiredPeers: requiredPeers.length ? requiredPeers : peerIds,
-    diversity,
+    diversity: independence.diversity,
+    independence,
     relativeSpread,
     elapsedMs: Number(elapsedMs.toFixed(2)),
     observations,
@@ -56,9 +51,17 @@ export function auditQuorum({ requestId, responses, elapsedMs, expectedPeers = [
   return { ...result, resultDigest: digest(result), canonical: stableJson(result) };
 }
 
-export function verifyQuorumResult(bundle, { expectedPeers = [], minDistinctOperators = 2, minDistinctProviders = 2, minDistinctSourceGroups = 2 } = {}) {
+function calculateRelativeSpread(observations) {
+  const prices = observations.map((x) => x.observation.price);
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  return min === 0 ? Infinity : (max - min) / min;
+}
+
+export function verifyQuorumResult(bundle, { expectedPeers = [], minDistinctOperators = 2, minDistinctProviders = 2, minDistinctSourceGroups = 2, trustedOperatorIds = null } = {}) {
   if (!bundle || bundle.type !== 'verification-result.v1') return { valid: false, reason: 'invalid-verification-result-type' };
-  if (bundle.resultDigest !== digest({
+  if (!Array.isArray(bundle.observations) || bundle.observationCount !== bundle.observations.length) return { valid: false, reason: 'observation-count-mismatch' };
+  const unsigned = {
     version: bundle.version,
     type: bundle.type,
     requestId: bundle.requestId,
@@ -66,15 +69,38 @@ export function verifyQuorumResult(bundle, { expectedPeers = [], minDistinctOper
     observationCount: bundle.observationCount,
     requiredPeers: bundle.requiredPeers,
     diversity: bundle.diversity,
+    independence: bundle.independence,
     relativeSpread: bundle.relativeSpread,
     elapsedMs: bundle.elapsedMs,
     observations: bundle.observations,
-  })) return { valid: false, reason: 'result-digest-mismatch' };
+  };
+  if (bundle.resultDigest !== digest(unsigned)) return { valid: false, reason: 'result-digest-mismatch' };
   const required = [...expectedPeers].sort();
   const actual = [...(bundle.requiredPeers ?? [])].sort();
   if (required.length && (required.length !== actual.length || required.some((peer, i) => peer !== actual[i]))) return { valid: false, reason: 'expected-peer-set-mismatch' };
-  if (bundle.diversity.distinctOperators < minDistinctOperators || bundle.diversity.distinctProviders < minDistinctProviders || bundle.diversity.distinctSourceGroups < minDistinctSourceGroups) {
-    return { valid: false, reason: 'insufficient-diversity' };
+
+  for (const item of bundle.observations) {
+    try { validateObservation(item.observation); } catch { return { valid: false, reason: 'invalid-observation' }; }
+    if (item.evidence?.digest !== digest(item.observation)) return { valid: false, reason: 'evidence-digest-mismatch' };
   }
+
+  const independence = assessIndependence(bundle.observations, {
+    minDistinctOperators,
+    minDistinctProviders,
+    minDistinctSourceGroups,
+    trustedOperatorIds,
+  });
+  if (!independence.independent) return { valid: false, reason: independence.reason };
+  if (bundle.diversity.distinctOperators !== independence.diversity.distinctOperators
+    || bundle.diversity.distinctProviders !== independence.diversity.distinctProviders
+    || bundle.diversity.distinctSourceGroups !== independence.diversity.distinctSourceGroups) {
+    return { valid: false, reason: 'diversity-metadata-mismatch' };
+  }
+  if (bundle.independence?.reason !== independence.reason) return { valid: false, reason: 'independence-metadata-mismatch' };
+
+  const relativeSpread = calculateRelativeSpread(bundle.observations);
+  if (bundle.relativeSpread !== relativeSpread) return { valid: false, reason: 'spread-metadata-mismatch' };
+  const expectedQuorum = bundle.observations.length >= 2 && independence.independent && relativeSpread <= 0.05;
+  if (bundle.quorum !== expectedQuorum) return { valid: false, reason: 'quorum-decision-mismatch' };
   return { valid: true };
 }
