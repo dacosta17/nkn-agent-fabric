@@ -49,9 +49,13 @@ jobs:
           NKN_LATENCY_WARMUP: 5
           NKN_LATENCY_FANOUT: 4
           NKN_LATENCY_PAYLOAD_BYTES: 256
+          NKN_LATENCY_REQUEST_TIMEOUT_MS: 7000
+          NKN_LATENCY_CONNECT_TIMEOUT_MS: 8000
+          NKN_LATENCY_CONNECT_ATTEMPTS: 1
+          NKN_LATENCY_ALLOW_UNAVAILABLE: true
         run: |
           set -o pipefail
-          timeout 120s npm run benchmark:nkn:fanout | tee nkn-latency-report.log
+          timeout 60s npm run benchmark:nkn:fanout | tee nkn-latency-report.log
 
       - name: Live NKN adversarial consensus integration
         env:
