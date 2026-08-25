@@ -16,6 +16,38 @@ NKN already has public examples for P2P messaging, remote connectivity, file tra
 
 The current implementation tests that thesis over the official `nkn-sdk` MultiClient transport.
 
+## Primary proof-of-value: verifiable agent consensus
+
+The strongest project demonstration is a live NKN consensus flow:
+
+```text
+                 Task
+                   │
+          ┌────────┼────────┐
+          ▼        ▼        ▼
+       Agent A  Agent B  Agent C
+          │        │        │
+          └──── NKN overlay ────┘
+                   │
+          signed observations
+                   │
+        independence policy
+                   │
+       quorum / Byzantine checks
+                   │
+             verified result
+```
+
+Run it with:
+
+```bash
+npm run integration:agent-consensus
+```
+
+The demo uses live market-data agents over NKN and requires diversity across operator, provider, and source-group identities. See [`docs/CONSENSUS_DEMO.md`](docs/CONSENSUS_DEMO.md).
+
+**Security boundary:** distinct operator IDs are policy inputs, not permissionless Sybil resistance. NKN provides decentralized addressability and peer communication; it does not by itself prove that two operators are controlled by different real-world entities. Production deployments need an operator registry, attestations, stake/economic bonding, or an equivalent mechanism.
+
 ## Reference protocol v1
 
 The project now freezes a transport-agnostic protocol core alongside the NKN adapters:
@@ -44,33 +76,6 @@ NKN transport remains an adapter layer. The official NKN Go SDK provides MultiCl
 
 All five domains reuse the same capability, quote, attestation, provenance, freshness, and deterministic-verification primitives.
 
-## Architecture
-
-```text
-                 Task
-                   │
-             capability discovery
-                   │
-        ┌──────────┼───────────┐
-        ▼          ▼           ▼
-     Agent A    Agent B     Agent C ...
-        │          │           │
-        └────── NKN overlay ───┘
-                   │
-          signed evidence
-                   │
-       independent providers
-         + operator diversity
-                   │
-       deterministic validator
-                   │
-      quorum / Byzantine rejection
-                   │
-           verified result
-                   │
-       reputation / future settlement
-```
-
 ## What is actually tested
 
 - NKN packet-mode request/reply;
@@ -80,6 +85,7 @@ All five domains reuse the same capability, quote, attestation, provenance, fres
 - SHA-256 task/result evidence digests;
 - freshness and bounded replay protection;
 - independent-provider and operator-diversity checks;
+- explicit same-operator/Sybil-policy failure cases;
 - Byzantine/outlier rejection;
 - failure injection and explicit quorum-failure assertions;
 - p50/p95/p99 NKN RTT measurement;
@@ -103,6 +109,7 @@ Run the live NKN integration from a network-enabled environment:
 
 ```bash
 npm run integration:nkn
+npm run integration:agent-consensus
 ```
 
 Run the attested market-data example:
@@ -124,7 +131,8 @@ The application therefore separates:
 3. external evidence provenance;
 4. freshness and replay checks;
 5. deterministic domain policy;
-6. quorum and diversity requirements.
+6. operator/provider/source diversity;
+7. quorum and Byzantine rejection.
 
 See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 
