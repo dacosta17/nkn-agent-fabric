@@ -56,28 +56,58 @@ async function createBenchmarkTransport(identifier) {
   });
 }
 
+async function closeTransports(transports) {
+  await Promise.allSettled(transports.filter(Boolean).map((transport) => Promise.resolve(transport.close())));
+}
+
+async function createBenchmarkTopology() {
+  const identifiers = [
+    `latency-coordinator-${process.pid}-${randomUUID().slice(0, 8)}`,
+    ...Array.from({ length: FANOUT }, (_, index) => `latency-worker-${index}-${process.pid}-${randomUUID().slice(0, 8)}`),
+  ];
+
+  // NKN connectivity is an external dependency. Create all clients concurrently so
+  // an unavailable bootstrap/relay path is bounded by one connect timeout, not N
+  // sequential timeouts. Never leave partially-created clients running.
+  const settled = await Promise.allSettled(identifiers.map((identifier) => createBenchmarkTransport(identifier)));
+  const transports = settled.map((result) => result.status === 'fulfilled' ? result.value : null);
+  const failure = settled.find((result) => result.status === 'rejected');
+
+  if (failure) {
+    await closeTransports(transports);
+    throw failure.reason instanceof Error ? failure.reason : new Error(String(failure.reason));
+  }
+
+  return { coordinator: transports[0], workers: transports.slice(1) };
+}
+
 async function main() {
   let coordinator;
-  const workers = [];
+  let workers = [];
 
   try {
-    coordinator = await createBenchmarkTransport(`latency-coordinator-${process.pid}-${randomUUID().slice(0, 8)}`);
+    ({ coordinator, workers } = await createBenchmarkTopology());
 
-    for (let index = 0; index < FANOUT; index += 1) {
-      const transport = await createBenchmarkTransport(`latency-worker-${index}-${process.pid}-${randomUUID().slice(0, 8)}`);
+    workers.forEach((transport) => {
       transport.onMessage(async ({ src, payload }) => {
         const env = parseEnvelope(payload);
         if (env.recipient !== transport.addr || env.kind !== 'request') return false;
         return JSON.stringify(createResponse({ requestId: env.requestId, sender: transport.addr, recipient: src, result: { ok: true } }));
       });
-      workers.push(transport);
-    }
+    });
 
     const addresses = workers.map((worker) => worker.addr);
     const payload = { type: 'latency-ping.v1', bytes: 'x'.repeat(Math.max(0, PAYLOAD_BYTES)) };
 
+    // Warmup is also the availability gate. The previous implementation ignored
+    // warmup failures and continued into 20 serial + 20 parallel samples, causing
+    // an unavailable NKN network to burn the CI timeout one request at a time.
     for (let i = 0; i < WARMUP; i += 1) {
-      await settleAll(addresses, (address) => rpc(coordinator, address, payload));
+      const warmupResults = await settleAll(addresses, (address) => rpc(coordinator, address, payload));
+      const failedWarmup = warmupResults.find((result) => !result.ok);
+      if (failedWarmup) {
+        throw new Error(`NKN warmup unavailable: ${failedWarmup.error ?? 'request failed'}`);
+      }
     }
 
     const serial = [];
@@ -120,7 +150,7 @@ async function main() {
     if (!ALLOW_UNAVAILABLE) throw error;
     console.log(JSON.stringify({ phase: 'latency-benchmark', status: 'unavailable', reason: message }, null, 2));
   } finally {
-    await Promise.allSettled(workers.map((worker) => worker.close()));
+    await closeTransports(workers);
     if (coordinator) await Promise.resolve(coordinator.close()).catch(() => {});
   }
 }
