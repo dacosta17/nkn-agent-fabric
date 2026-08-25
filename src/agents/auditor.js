@@ -33,9 +33,7 @@ export function auditQuorum({ requestId, responses, elapsedMs, expectedPeers = [
     trustedOperatorIds,
   });
 
-  const prices = observations.map((x) => x.observation.price);
-  const min = Math.min(...prices); const max = Math.max(...prices);
-  const relativeSpread = min === 0 ? Infinity : (max - min) / min;
+  const relativeSpread = calculateRelativeSpread(observations);
   const quorum = observations.length >= 2 && independence.independent && relativeSpread <= 0.05;
   const result = {
     version: 1,
@@ -53,8 +51,16 @@ export function auditQuorum({ requestId, responses, elapsedMs, expectedPeers = [
   return { ...result, resultDigest: digest(result), canonical: stableJson(result) };
 }
 
+function calculateRelativeSpread(observations) {
+  const prices = observations.map((x) => x.observation.price);
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  return min === 0 ? Infinity : (max - min) / min;
+}
+
 export function verifyQuorumResult(bundle, { expectedPeers = [], minDistinctOperators = 2, minDistinctProviders = 2, minDistinctSourceGroups = 2, trustedOperatorIds = null } = {}) {
   if (!bundle || bundle.type !== 'verification-result.v1') return { valid: false, reason: 'invalid-verification-result-type' };
+  if (!Array.isArray(bundle.observations) || bundle.observationCount !== bundle.observations.length) return { valid: false, reason: 'observation-count-mismatch' };
   const unsigned = {
     version: bundle.version,
     type: bundle.type,
@@ -72,6 +78,12 @@ export function verifyQuorumResult(bundle, { expectedPeers = [], minDistinctOper
   const required = [...expectedPeers].sort();
   const actual = [...(bundle.requiredPeers ?? [])].sort();
   if (required.length && (required.length !== actual.length || required.some((peer, i) => peer !== actual[i]))) return { valid: false, reason: 'expected-peer-set-mismatch' };
+
+  for (const item of bundle.observations) {
+    try { validateObservation(item.observation); } catch { return { valid: false, reason: 'invalid-observation' }; }
+    if (item.evidence?.digest !== digest(item.observation)) return { valid: false, reason: 'evidence-digest-mismatch' };
+  }
+
   const independence = assessIndependence(bundle.observations, {
     minDistinctOperators,
     minDistinctProviders,
@@ -85,5 +97,10 @@ export function verifyQuorumResult(bundle, { expectedPeers = [], minDistinctOper
     return { valid: false, reason: 'diversity-metadata-mismatch' };
   }
   if (bundle.independence?.reason !== independence.reason) return { valid: false, reason: 'independence-metadata-mismatch' };
+
+  const relativeSpread = calculateRelativeSpread(bundle.observations);
+  if (bundle.relativeSpread !== relativeSpread) return { valid: false, reason: 'spread-metadata-mismatch' };
+  const expectedQuorum = bundle.observations.length >= 2 && independence.independent && relativeSpread <= 0.05;
+  if (bundle.quorum !== expectedQuorum) return { valid: false, reason: 'quorum-decision-mismatch' };
   return { valid: true };
 }
