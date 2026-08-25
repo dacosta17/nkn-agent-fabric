@@ -3,23 +3,37 @@ import { randomUUID } from 'node:crypto';
 import { createNknTransport } from '../lib/nkn-transport.js';
 import { mapConcurrent } from '../lib/concurrency.js';
 import { createRequest, createResponse, parseEnvelope } from '../lib/runtime.js';
+import { percentile, settleAll, summarizeSamples, validateLatencyConfig, withTimeout } from '../lib/latency-benchmark.js';
 
 const SAMPLES = Number(process.env.NKN_LATENCY_SAMPLES ?? 20);
 const WARMUP = Number(process.env.NKN_LATENCY_WARMUP ?? 5);
 const FANOUT = Number(process.env.NKN_LATENCY_FANOUT ?? 4);
 const PAYLOAD_BYTES = Number(process.env.NKN_LATENCY_PAYLOAD_BYTES ?? 256);
+const REQUEST_TIMEOUT_MS = Number(process.env.NKN_LATENCY_REQUEST_TIMEOUT_MS ?? 12_000);
+const MIN_SUCCESS_RATE_PCT = Number(process.env.NKN_LATENCY_MIN_SUCCESS_RATE_PCT ?? 80);
 
-function percentile(values, p) {
-  const sorted = [...values].sort((a, b) => a - b);
-  const index = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
-  return Number(sorted[index].toFixed(2));
-}
+validateLatencyConfig({ samples: SAMPLES, warmup: WARMUP, fanout: FANOUT, payloadBytes: PAYLOAD_BYTES, timeoutMs: REQUEST_TIMEOUT_MS });
+if (!Number.isFinite(MIN_SUCCESS_RATE_PCT) || MIN_SUCCESS_RATE_PCT <= 0 || MIN_SUCCESS_RATE_PCT > 100) throw new RangeError('MIN_SUCCESS_RATE_PCT must be > 0 and <= 100');
 
 async function rpc(client, address, payload) {
   const request = createRequest({ requestId: randomUUID(), sender: client.addr, recipient: address, task: payload });
   const started = performance.now();
-  await client.send(address, JSON.stringify(request));
+  await withTimeout(() => client.send(address, JSON.stringify(request)), REQUEST_TIMEOUT_MS, `NKN send to ${address}`);
   return performance.now() - started;
+}
+
+async function runFanout(addresses, coordinator, payload, mode) {
+  const started = performance.now();
+  const results = mode === 'parallel'
+    ? await settleAll(addresses, (address) => rpc(coordinator, address, payload))
+    : await settleAll(addresses, async (address) => rpc(coordinator, address, payload));
+  const elapsedMs = performance.now() - started;
+  const successful = results.filter((result) => result.ok).length;
+  return {
+    ok: successful === addresses.length,
+    elapsedMs,
+    results,
+  };
 }
 
 async function main() {
@@ -39,29 +53,44 @@ async function main() {
     const payload = { type: 'latency-ping.v1', bytes: 'x'.repeat(Math.max(0, PAYLOAD_BYTES)) };
 
     for (let i = 0; i < WARMUP; i += 1) {
-      await mapConcurrent(addresses, (address) => rpc(coordinator, address, payload), FANOUT);
+      await settleAll(addresses, (address) => rpc(coordinator, address, payload));
     }
 
     const serial = [];
     const parallel = [];
     for (let i = 0; i < SAMPLES; i += 1) {
-      const serialStart = performance.now();
-      for (const address of addresses) await rpc(coordinator, address, payload);
-      serial.push(performance.now() - serialStart);
+      const serialSample = await runFanout(addresses, coordinator, payload, 'serial');
+      serial.push({ ok: serialSample.ok, elapsedMs: serialSample.elapsedMs, error: serialSample.results.find((result) => !result.ok)?.error });
 
-      const parallelStart = performance.now();
-      await mapConcurrent(addresses, (address) => rpc(coordinator, address, payload), FANOUT);
-      parallel.push(performance.now() - parallelStart);
+      const parallelSample = await runFanout(addresses, coordinator, payload, 'parallel');
+      parallel.push({ ok: parallelSample.ok, elapsedMs: parallelSample.elapsedMs, error: parallelSample.results.find((result) => !result.ok)?.error });
     }
 
+    const serialReport = summarizeSamples(serial);
+    const parallelReport = summarizeSamples(parallel);
+    const overallRequests = [...serial, ...parallel];
+    const overallSuccessRatePct = Number(((overallRequests.filter((sample) => sample.ok).length / overallRequests.length) * 100).toFixed(2));
+
+    if (!serialReport.successful || !parallelReport.successful) {
+      throw new Error('latency benchmark produced no complete successful samples');
+    }
+    if (overallSuccessRatePct < MIN_SUCCESS_RATE_PCT) {
+      throw new Error(`NKN latency success rate ${overallSuccessRatePct}% is below required ${MIN_SUCCESS_RATE_PCT}%`);
+    }
+
+    const serialP50 = percentile(serial.filter((sample) => sample.ok).map((sample) => sample.elapsedMs), 50);
+    const parallelP50 = percentile(parallel.filter((sample) => sample.ok).map((sample) => sample.elapsedMs), 50);
     const report = {
       samples: SAMPLES,
       warmup: WARMUP,
       fanout: FANOUT,
       payloadBytes: PAYLOAD_BYTES,
-      serialMs: { p50: percentile(serial, 50), p95: percentile(serial, 95), p99: percentile(serial, 99) },
-      parallelMs: { p50: percentile(parallel, 50), p95: percentile(parallel, 95), p99: percentile(parallel, 99) },
-      parallelP50ReductionPct: Number(((1 - percentile(parallel, 50) / percentile(serial, 50)) * 100).toFixed(2)),
+      requestTimeoutMs: REQUEST_TIMEOUT_MS,
+      minSuccessRatePct: MIN_SUCCESS_RATE_PCT,
+      serial: serialReport,
+      parallel: parallelReport,
+      overallSuccessRatePct,
+      parallelP50ReductionPct: Number(((1 - parallelP50 / serialP50) * 100).toFixed(2)),
     };
     console.log(JSON.stringify({ phase: 'latency-benchmark', report }, null, 2));
   } finally {
@@ -71,6 +100,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error.stack ?? error.message);
+  console.error(JSON.stringify({ phase: 'latency-benchmark-failed', error: error.stack ?? error.message }));
   process.exitCode = 1;
 });
