@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, statSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -40,7 +40,6 @@ test('tampering with the encrypted record fails closed', () => {
     const data = Buffer.from(record.cipher.data, 'base64');
     data[0] ^= 0xff;
     record.cipher.data = data.toString('base64');
-    const { writeFileSync } = await import('node:fs');
     writeFileSync(filePath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
     assert.throws(() => loadOrCreatePersistentIdentity({ filePath, passphrase: 'correct horse battery staple' }), /cannot load operator identity/);
   } finally {
