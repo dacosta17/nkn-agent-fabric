@@ -21,8 +21,11 @@ const persistentIdentity = identityFilePath
   ? loadOrCreatePersistentIdentity({ filePath: identityFilePath, passphrase: identityPassphrase })
   : null;
 const identity = persistentIdentity?.identity ?? createIdentity();
+const transportIdentifier = persistentIdentity
+  ? `${source}-${persistentIdentity.operatorFingerprint.slice(0, 16)}`
+  : `${source}-${process.pid}`;
 const transport = await createNknTransport({
-  identifier: `${source}-${process.pid}`,
+  identifier: transportIdentifier,
   ...(persistentIdentity ? { seed: persistentIdentity.nknSeed } : {}),
 });
 const manifest = signManifest({ nknAddress: transport.addr, identity, capabilities: ['market-observation'] });
