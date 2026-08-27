@@ -4,6 +4,8 @@ import { verifyIdentityBindingProof, verifyManifest } from './agent-trust.js';
 const ERC8004_REGISTRATION_TYPE = 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1';
 const TOKEN_URI_SELECTOR = 'c87b56dd';
 const OWNER_OF_SELECTOR = '6352211e';
+const CHAIN_ID_METHOD = 'eth_chainId';
+const BLOCK_NUMBER_METHOD = 'eth_blockNumber';
 
 function assertHex(value, name) {
   if (typeof value !== 'string' || !/^0x[0-9a-fA-F]+$/.test(value)) throw new Error(`${name} must be hex`);
@@ -29,6 +31,13 @@ function decodeAddress(hex) {
   const value = hex.replace(/^0x/, '');
   if (value.length < 64) throw new Error('invalid ABI address response');
   return `0x${value.slice(-40)}`;
+}
+async function rpcCall(fetchImpl, rpcUrl, method, params = []) {
+  const response = await fetchImpl(rpcUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }) });
+  if (!response.ok) throw new Error(`RPC HTTP ${response.status}`);
+  const payload = await response.json();
+  if (payload.error) throw new Error(`RPC error: ${payload.error.message ?? 'unknown error'}`);
+  return payload.result;
 }
 
 export function parseAgentRegistry(agentRegistry) {
@@ -79,29 +88,28 @@ export function verifyExternalAgentAdmission({ registration, agentRegistry, agen
   return { valid: true, agentRegistry, agentId: Number(agentId), nknAddress: manifest.agentId, registrationDigest: digest(registration), applicationPublicKey: manifest.publicKey };
 }
 
-export async function readIdentityRegistry({ rpcUrl, identityRegistry, agentId, fetchImpl = fetch }) {
+export async function readIdentityRegistry({ rpcUrl, identityRegistry, chainId, agentId, fetchImpl = fetch }) {
   assertHex(identityRegistry, 'identityRegistry');
+  const expectedChainId = Number(chainId);
+  const actualChainId = Number(BigInt(await rpcCall(fetchImpl, rpcUrl, CHAIN_ID_METHOD)));
+  if (actualChainId !== expectedChainId) throw new Error(`chain-id-mismatch: expected ${expectedChainId}, got ${actualChainId}`);
+  const blockTag = await rpcCall(fetchImpl, rpcUrl, BLOCK_NUMBER_METHOD);
   const id = encodeUint256(agentId);
   const calls = [
-    { method: 'eth_call', params: [{ to: identityRegistry, data: `0x${TOKEN_URI_SELECTOR}${id}` }, 'latest'], id: 1, jsonrpc: '2.0' },
-    { method: 'eth_call', params: [{ to: identityRegistry, data: `0x${OWNER_OF_SELECTOR}${id}` }, 'latest'], id: 2, jsonrpc: '2.0' },
+    { method: 'eth_call', params: [{ to: identityRegistry, data: `0x${TOKEN_URI_SELECTOR}${id}` }, blockTag], id: 1, jsonrpc: '2.0' },
+    { method: 'eth_call', params: [{ to: identityRegistry, data: `0x${OWNER_OF_SELECTOR}${id}` }, blockTag], id: 2, jsonrpc: '2.0' },
   ];
-  const responses = await Promise.all(calls.map((body) => fetchImpl(rpcUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(async (response) => {
-    if (!response.ok) throw new Error(`RPC HTTP ${response.status}`);
-    const payload = await response.json();
-    if (payload.error) throw new Error(`RPC error: ${payload.error.message ?? 'unknown error'}`);
-    return payload.result;
-  })));
-  return { agentId: Number(agentId), agentURI: decodeAbiString(responses[0]), owner: decodeAddress(responses[1]), identityRegistry };
+  const responses = await Promise.all(calls.map((body) => rpcCall(fetchImpl, rpcUrl, body.method, body.params)));
+  return { agentId: Number(agentId), agentURI: decodeAbiString(responses[0]), owner: decodeAddress(responses[1]), identityRegistry, chainId: expectedChainId, blockTag };
 }
 
 export async function resolveAndVerifyOnChainAgent({ rpcUrl, agentRegistry, agentId, registration, fetchImpl = fetch }) {
   const parsed = parseAgentRegistry(agentRegistry);
   if (parsed.namespace !== 'eip155') throw new Error('only EVM ERC-8004 registries are supported');
-  const onChain = await readIdentityRegistry({ rpcUrl, identityRegistry: parsed.identityRegistry, agentId, fetchImpl });
+  const onChain = await readIdentityRegistry({ rpcUrl, identityRegistry: parsed.identityRegistry, chainId: parsed.chainId, agentId, fetchImpl });
   const registrationResult = validateRegistrationFile(registration, { expectedRegistry: agentRegistry, expectedAgentId: agentId });
   if (!registrationResult.valid) return { valid: false, reason: registrationResult.reason, onChain };
-  return { valid: true, onChain, registrationDigest: digest(registration), normalized: stableJson({ agentRegistry, agentId: Number(agentId), agentURI: onChain.agentURI, owner: onChain.owner, registrationDigest: digest(registration) }) };
+  return { valid: true, onChain, registrationDigest: digest(registration), normalized: stableJson({ agentRegistry, agentId: Number(agentId), agentURI: onChain.agentURI, owner: onChain.owner, blockTag: onChain.blockTag, registrationDigest: digest(registration) }) };
 }
 
 export { ERC8004_REGISTRATION_TYPE };
