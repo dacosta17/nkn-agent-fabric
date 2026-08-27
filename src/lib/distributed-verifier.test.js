@@ -21,6 +21,16 @@ test('an independent verifier can derive quorum without coordinator output', () 
   assert.ok(result.evidenceDigest);
 });
 
+test('votes are cryptographically bound to the exact round policy', () => {
+  const { agents, identities, manifests } = fixture();
+  const round = createRound({ roundId: 'round-policy', task: { value: 1 }, participants: agents, quorum: 3 });
+  const votes = agents.slice(0, 3).map((agent) => createVerificationVote({ round, agentId: agent, observationDigest: 'obs-policy', outcome: 'accept', identity: identities[agent] }));
+  const mutatedRound = { ...round, quorum: 2 };
+  const result = verifyRoundEvidence({ round: mutatedRound, votes, manifests });
+  assert.equal(result.decision, 'no-quorum');
+  assert.deepEqual(result.invalidVotes, ['invalid-round-digest']);
+});
+
 test('a coordinator cannot forge quorum by changing a signer identity', () => {
   const { agents, identities, manifests } = fixture();
   const round = createRound({ roundId: 'round-2', task: { value: 1 }, participants: agents, quorum: 3 });
@@ -41,14 +51,30 @@ test('duplicate votes do not increase participant weight', () => {
   assert.ok(result.invalidVotes.includes('a:duplicate'));
 });
 
-test('conflicting observations fail closed when neither side reaches quorum', () => {
+test('conflicting observations cannot be aggregated into a false quorum', () => {
   const { agents, identities, manifests } = fixture();
-  const round = createRound({ roundId: 'round-4', task: { value: 1 }, participants: agents, quorum: 3 });
+  const round = createRound({ roundId: 'round-4', task: { value: 1 }, participants: agents, quorum: 2 });
   const votes = [
     createVerificationVote({ round, agentId: 'a', observationDigest: 'obs-a', outcome: 'accept', identity: identities.a }),
-    createVerificationVote({ round, agentId: 'b', observationDigest: 'obs-b', outcome: 'reject', identity: identities.b }),
+    createVerificationVote({ round, agentId: 'b', observationDigest: 'obs-b', outcome: 'accept', identity: identities.b }),
     createVerificationVote({ round, agentId: 'c', observationDigest: 'obs-c', outcome: 'accept', identity: identities.c }),
   ];
   const result = verifyRoundEvidence({ round, votes, manifests });
   assert.equal(result.decision, 'no-quorum');
+  assert.equal(result.acceptedCount, 3);
+  assert.equal(result.participatingCount, 3);
+});
+
+test('a common claim can reach quorum even when another participant disagrees', () => {
+  const { agents, identities, manifests } = fixture();
+  const round = createRound({ roundId: 'round-5', task: { value: 1 }, participants: agents, quorum: 3 });
+  const votes = [
+    createVerificationVote({ round, agentId: 'a', observationDigest: 'obs-common', outcome: 'accept', identity: identities.a }),
+    createVerificationVote({ round, agentId: 'b', observationDigest: 'obs-common', outcome: 'accept', identity: identities.b }),
+    createVerificationVote({ round, agentId: 'c', observationDigest: 'obs-common', outcome: 'accept', identity: identities.c }),
+    createVerificationVote({ round, agentId: 'd', observationDigest: 'obs-other', outcome: 'accept', identity: identities.d }),
+  ];
+  const result = verifyRoundEvidence({ round, votes, manifests });
+  assert.equal(result.decision, 'accept');
+  assert.equal(result.acceptedCount, 4);
 });
