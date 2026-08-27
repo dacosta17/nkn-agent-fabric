@@ -1,0 +1,51 @@
+import { sign } from 'node:crypto';
+import { digest, stableJson } from './canonical.js';
+import { verifySignedObject } from './agent-trust.js';
+
+export const DISTRIBUTED_ROUND_VERSION = 1;
+
+export function createRound({ roundId, task, participants, quorum }) {
+  if (!roundId || !task || !Array.isArray(participants) || participants.length === 0) throw new Error('invalid verification round');
+  if (!Number.isInteger(quorum) || quorum < 1 || quorum > participants.length) throw new Error('invalid quorum');
+  const ids = [...new Set(participants)].sort();
+  if (ids.length !== participants.length) throw new Error('duplicate participants');
+  return { version: DISTRIBUTED_ROUND_VERSION, roundId, taskDigest: digest(task), participants: ids, quorum };
+}
+
+export function createVerificationVote({ round, agentId, observationDigest, outcome, identity, createdAt = Date.now(), ttlMs = 60_000 }) {
+  if (!round?.roundId || !round.taskDigest) throw new Error('round is required');
+  if (!round.participants.includes(agentId)) throw new Error('agent is not a participant');
+  if (!observationDigest || !['accept', 'reject'].includes(outcome)) throw new Error('invalid verification vote');
+  const unsigned = { version: DISTRIBUTED_ROUND_VERSION, type: 'verification-vote.v1', roundId: round.roundId, taskDigest: round.taskDigest, agentId, observationDigest, outcome, createdAt, expiresAt: createdAt + ttlMs };
+  return { ...unsigned, signature: Buffer.from(sign(null, Buffer.from(stableJson(unsigned)), identity.privateKey)).toString('base64') };
+}
+
+export function verifyRoundEvidence({ round, votes, manifests = [], now = Date.now() }) {
+  if (!round || round.version !== DISTRIBUTED_ROUND_VERSION) return invalid('invalid-round');
+  if (!Array.isArray(votes)) return invalid('invalid-votes');
+  const byAgent = new Map(manifests.map((manifest) => [manifest.agentId, manifest]));
+  const seen = new Set();
+  const accepted = [];
+  const rejected = [];
+  const invalidVotes = [];
+
+  for (const vote of votes) {
+    if (!vote || vote.type !== 'verification-vote.v1') { invalidVotes.push('malformed'); continue; }
+    if (!round.participants.includes(vote.agentId)) { invalidVotes.push(`${vote.agentId}:not-participant`); continue; }
+    if (seen.has(vote.agentId)) { invalidVotes.push(`${vote.agentId}:duplicate`); continue; }
+    const manifest = byAgent.get(vote.agentId);
+    if (!manifest?.publicKey) { invalidVotes.push(`${vote.agentId}:missing-identity`); continue; }
+    const verified = verifySignedObject(vote, manifest.publicKey, { now });
+    if (!verified.valid || vote.roundId !== round.roundId || vote.taskDigest !== round.taskDigest) { invalidVotes.push(`${vote.agentId}:invalid-signature-or-round`); continue; }
+    seen.add(vote.agentId);
+    (vote.outcome === 'accept' ? accepted : rejected).push(vote);
+  }
+
+  const decision = accepted.length >= round.quorum ? 'accept' : rejected.length >= round.quorum ? 'reject' : 'no-quorum';
+  const validVotes = votes.filter((vote) => seen.has(vote?.agentId));
+  return { valid: decision !== 'no-quorum', decision, acceptedCount: accepted.length, rejectedCount: rejected.length, participatingCount: seen.size, invalidVotes, evidenceDigest: digest({ round, votes: validVotes }) };
+}
+
+function invalid(reason) {
+  return { valid: false, decision: 'no-quorum', acceptedCount: 0, rejectedCount: 0, participatingCount: 0, invalidVotes: [reason] };
+}
