@@ -5,6 +5,7 @@ import { readIdentityRegistry, resolveAndVerifyOnChainAgent } from './erc8004-in
 const registry = '0x8004a6090Cd10A7288092483047B097295Fb8847';
 const agentURI = 'https://example.test/agent.json';
 const owner = '0x1111111111111111111111111111111111111111';
+const blockTag = '0x1234';
 
 function encodeString(value) {
   const data = Buffer.from(value, 'utf8');
@@ -17,14 +18,19 @@ function encodeAddress(address) {
 
 function mockFetch(_url, options) {
   const body = JSON.parse(options.body);
+  if (body.method === 'eth_chainId') return Promise.resolve({ ok: true, json: async () => ({ jsonrpc: '2.0', id: body.id, result: '0xaa36a7' }) });
+  if (body.method === 'eth_blockNumber') return Promise.resolve({ ok: true, json: async () => ({ jsonrpc: '2.0', id: body.id, result: blockTag }) });
   const isTokenUri = body.params[0].data.startsWith('0xc87b56dd');
+  assert.equal(body.params[1], blockTag);
   return Promise.resolve({ ok: true, json: async () => ({ jsonrpc: '2.0', id: body.id, result: isTokenUri ? encodeString(agentURI) : encodeAddress(owner) }) });
 }
 
-test('reads ERC-8004 tokenURI and ownerOf using JSON-RPC without an EVM dependency', async () => {
-  const result = await readIdentityRegistry({ rpcUrl: 'https://rpc.example', identityRegistry: registry, agentId: 42, fetchImpl: mockFetch });
+test('reads ERC-8004 tokenURI and ownerOf at one chain snapshot', async () => {
+  const result = await readIdentityRegistry({ rpcUrl: 'https://rpc.example', identityRegistry: registry, chainId: 11155111, agentId: 42, fetchImpl: mockFetch });
   assert.equal(result.agentURI, agentURI);
   assert.equal(result.owner, owner);
+  assert.equal(result.chainId, 11155111);
+  assert.equal(result.blockTag, blockTag);
 });
 
 test('rejects an on-chain registration whose resolved file does not reference the same identity', async () => {
@@ -37,4 +43,12 @@ test('rejects an on-chain registration whose resolved file does not reference th
   const result = await resolveAndVerifyOnChainAgent({ rpcUrl: 'https://rpc.example', agentRegistry: `eip155:11155111:${registry}`, agentId: 42, registration, fetchImpl: mockFetch });
   assert.equal(result.valid, false);
   assert.equal(result.reason, 'on-chain-registration-reference-mismatch');
+});
+
+test('rejects an RPC endpoint on the wrong chain', async () => {
+  const wrongChainFetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ jsonrpc: '2.0', id: body.id, result: body.method === 'eth_chainId' ? '0x1' : blockTag }) };
+  };
+  await assert.rejects(() => readIdentityRegistry({ rpcUrl: 'https://rpc.example', identityRegistry: registry, chainId: 11155111, agentId: 42, fetchImpl: wrongChainFetch }), /chain-id-mismatch/);
 });
