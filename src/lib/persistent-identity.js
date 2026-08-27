@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, randomBytes, scryptSync } from 'node:crypto';
 import { createIdentity } from './agent-trust.js';
 
 const VERSION = 1;
@@ -20,7 +20,18 @@ function encodePrivateKey(identity) {
   return identity.privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64');
 }
 
-function decodeIdentity(record, passphrase) {
+function createIdentityFromPrivateKey(privateKeyB64) {
+  const privateKey = createPrivateKey({ key: Buffer.from(privateKeyB64, 'base64'), type: 'pkcs8', format: 'der' });
+  const publicKey = createPublicKey(privateKey);
+  return { privateKey, publicKey, publicKeyB64: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') };
+}
+
+function fingerprint(publicKeyB64) {
+  return createHash('sha256').update(Buffer.from(publicKeyB64, 'base64')).digest('hex');
+}
+
+function decryptRecord(record, passphrase) {
+  if (record?.version !== VERSION || record?.kdf?.name !== 'scrypt' || record?.cipher?.name !== 'aes-256-gcm') throw new Error('unsupported persisted identity format');
   const salt = Buffer.from(record.kdf.salt, 'base64');
   const iv = Buffer.from(record.cipher.iv, 'base64');
   const tag = Buffer.from(record.cipher.tag, 'base64');
@@ -29,25 +40,10 @@ function decodeIdentity(record, passphrase) {
   decipher.setAuthTag(tag);
   const plaintext = Buffer.concat([decipher.update(Buffer.from(record.cipher.data, 'base64')), decipher.final()]);
   const payload = JSON.parse(plaintext.toString('utf8'));
-  if (payload.version !== VERSION || !payload.nknSeed || !payload.privateKey) throw new Error('invalid persisted identity payload');
+  if (payload.version !== VERSION || !payload.nknSeed || !payload.privateKey || !payload.publicKeyB64) throw new Error('invalid persisted identity payload');
   const identity = createIdentityFromPrivateKey(payload.privateKey);
   if (identity.publicKeyB64 !== payload.publicKeyB64) throw new Error('persisted identity public key mismatch');
   return { identity, nknSeed: payload.nknSeed, operatorFingerprint: fingerprint(payload.publicKeyB64) };
-}
-
-function createIdentityFromPrivateKey(privateKeyB64) {
-  const { createPrivateKey, createPublicKey } = requireCrypto();
-  const privateKey = createPrivateKey({ key: Buffer.from(privateKeyB64, 'base64'), type: 'pkcs8', format: 'der' });
-  const publicKey = createPublicKey(privateKey);
-  return { privateKey, publicKey, publicKeyB64: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') };
-}
-
-function requireCrypto() {
-  return { createPrivateKey: (awaitless => awaitless) };
-}
-
-function fingerprint(publicKeyB64) {
-  return createHash('sha256').update(Buffer.from(publicKeyB64, 'base64')).digest('hex');
 }
 
 function encryptPayload(payload, passphrase) {
@@ -66,8 +62,7 @@ function encryptPayload(payload, passphrase) {
 export function loadOrCreatePersistentIdentity({ filePath, passphrase }) {
   if (!filePath) throw new Error('identity file path is required');
   try {
-    const record = JSON.parse(readFileSync(filePath, 'utf8'));
-    return decodeIdentity(record, passphrase);
+    return decryptRecord(JSON.parse(readFileSync(filePath, 'utf8')), passphrase);
   } catch (error) {
     if (error?.code !== 'ENOENT') throw new Error(`cannot load operator identity: ${error.message}`);
     const identity = createIdentity();
