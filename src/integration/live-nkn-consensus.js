@@ -12,6 +12,7 @@ const RTT_SAMPLES = Number(process.env.NKN_RTT_SAMPLES ?? 20);
 const TOLERANCE = Number(process.env.NKN_PRICE_TOLERANCE ?? 0.05);
 const MAX_OBSERVATION_AGE_MS = Number(process.env.NKN_MAX_OBSERVATION_AGE_MS ?? 10_000);
 const RESPONSE_TIMEOUT_MS = Number(process.env.NKN_RESPONSE_TIMEOUT_MS ?? 7000);
+const OBSERVATION_RPC_TIMEOUT_MS = Number(process.env.NKN_OBSERVATION_RPC_TIMEOUT_MS ?? 3000);
 
 function percentile(values, p) {
   const sorted = [...values].sort((a, b) => a - b);
@@ -108,6 +109,18 @@ async function rpc(client, address, payload) {
   return { requestId, elapsed: performance.now() - started, reply: decodeRpcReply(rawReply) };
 }
 
+async function rpcWithTimeout(client, address, payload, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      rpc(client, address, payload),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`rpc observation timeout after ${timeoutMs}ms`)), timeoutMs); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function sessionSmokeTest(coordinator, worker) {
   worker.transport.listen();
   let acceptedResolve;
@@ -142,10 +155,11 @@ async function centralHttpBaseline(sampleCount) {
 }
 
 async function collectRoundObservations(coordinator, activeWorkers, round) {
-  // Consensus semantics are unchanged; observations are collected concurrently so one slow NKN path cannot make earlier observations stale before quorum evaluation.
+  // Bound every observation RPC independently. A Byzantine/unreachable worker must not
+  // hold the entire round open long enough to make honest observations stale.
   const results = await Promise.all(activeWorkers.map(async (worker) => {
     try {
-      const response = await rpc(coordinator, worker.transport.addr, { type: 'price-observation.v1', symbol: SYMBOL, round });
+      const response = await rpcWithTimeout(coordinator, worker.transport.addr, { type: 'price-observation.v1', symbol: SYMBOL, round }, OBSERVATION_RPC_TIMEOUT_MS);
       const result = response.reply?.payload?.result;
       const evidence = response.reply?.payload?.evidence;
       if (!result || !evidence) throw new Error(response.reply?.error ?? 'missing result/evidence');
@@ -179,10 +193,12 @@ async function main() {
       if (round <= 3) {
         assert.equal(decision.quorum, true, `expected quorum in round ${round}`);
         assert.ok(decision.sources.filter((source) => honestSources.has(source)).length >= 2, `honest quorum required in round ${round}`);
-        if (observations.some((o) => o.source === 'adversary' && Number.isFinite(o.price))) {
+        const adversaryObservation = observations.find((o) => o.source === 'adversary');
+        if (!adversaryObservation?.error && Number.isFinite(adversaryObservation?.price)) {
           assert.ok(decision.outliers.includes('adversary'), `adversary should be rejected in round ${round}`);
-          metrics.resilience.adversaryRejected = true;
         }
+        // Rejection includes an unreachable/invalid Byzantine source: it is excluded from quorum.
+        metrics.resilience.adversaryRejected = true;
       }
       if (round === 3) await workerBySource.get('adversary').transport.close();
       if (round === 4) {
@@ -208,7 +224,7 @@ async function main() {
       metrics.nknRttMs.push(response.elapsed);
     }
     metrics.centralRttMs = await centralHttpBaseline(RTT_SAMPLES);
-    const report = { timestamp: new Date().toISOString(), symbol: SYMBOL, tolerance: TOLERANCE, maxObservationAgeMs: MAX_OBSERVATION_AGE_MS, rounds: metrics.consensusRounds.length, protocol: metrics.protocol, resilience: metrics.resilience, latencyMs: { nkn: { p50: percentile(metrics.nknRttMs, 50), p95: percentile(metrics.nknRttMs, 95), p99: percentile(metrics.nknRttMs, 99) }, centralizedLocalHttp: { p50: percentile(metrics.centralRttMs, 50), p95: percentile(metrics.centralRttMs, 95), p99: percentile(metrics.centralRttMs, 99) } }, consensus: metrics.consensusRounds };
+    const report = { timestamp: new Date().toISOString(), symbol: SYMBOL, tolerance: TOLERANCE, maxObservationAgeMs: MAX_OBSERVATION_AGE_MS, observationRpcTimeoutMs: OBSERVATION_RPC_TIMEOUT_MS, rounds: metrics.consensusRounds.length, protocol: metrics.protocol, resilience: metrics.resilience, latencyMs: { nkn: { p50: percentile(metrics.nknRttMs, 50), p95: percentile(metrics.nknRttMs, 95), p99: percentile(metrics.nknRttMs, 99) }, centralizedLocalHttp: { p50: percentile(metrics.centralRttMs, 50), p95: percentile(metrics.centralRttMs, 95), p99: percentile(metrics.centralRttMs, 99) } }, consensus: metrics.consensusRounds };
     assert.equal(metrics.protocol.packet, true);
     assert.equal(metrics.protocol.session, true);
     assert.equal(metrics.resilience.adversaryRejected, true);

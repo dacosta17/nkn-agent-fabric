@@ -57,13 +57,21 @@ The underlying integration can also be run directly with `npm run integration:ag
 
 ## Operator identity layer
 
-The next protocol layer is a signed operator registry. `src/lib/operator-registry.js` defines versioned Ed25519-signed operator records that bind an operator identity to an application public key and one or more NKN addresses. Verifiers can check membership before counting an agent toward an independence quorum.
+The project has a signed operator registry. `src/lib/operator-registry.js` defines versioned Ed25519-signed operator records that bind an operator identity to an application public key and one or more NKN addresses. Verifiers can check membership before counting an agent toward an independence quorum.
 
 This registry is an **identity primitive, not permissionless Sybil resistance**. It proves membership in a registry snapshot; it does not prove that two registered identities are controlled by independent real-world entities. See [`docs/OPERATOR_REGISTRY.md`](docs/OPERATOR_REGISTRY.md).
 
+## ERC-8004 external-agent interoperability
+
+`src/lib/erc8004-interop.js` adds a narrow interoperability layer rather than reimplementing ERC-8004 or A2A. An ERC-8004 registration file can advertise an NKN service, and a verifier can require that the advertised NKN endpoint matches a live NKN transport source and the project's signed application identity binding.
+
+For EVM registries, the adapter can also read `tokenURI(agentId)` and `ownerOf(agentId)` through standard JSON-RPC `eth_call` and verify that the resolved registration references the exact `{agentRegistry, agentId}` pair. This is an admission primitive, not permissionless Sybil resistance and not a claim that the EVM owner controls the Ed25519 application key.
+
+See [`docs/EXTERNAL_AGENT_INTEROP.md`](docs/EXTERNAL_AGENT_INTEROP.md).
+
 ## Reference protocol v1
 
-The project now freezes a transport-agnostic protocol core alongside the NKN adapters:
+The project freezes a transport-agnostic protocol core alongside the NKN adapters:
 
 - canonical JSON and SHA-256 digest rules;
 - versioned envelopes;
@@ -100,6 +108,8 @@ All five domains reuse the same capability, quote, attestation, provenance, fres
 - independent-provider and operator-diversity checks;
 - explicit same-operator/Sybil-policy failure cases;
 - signed operator registry records and membership checks;
+- ERC-8004 registration ↔ NKN endpoint admission checks;
+- ERC-8004 EVM `tokenURI`/`ownerOf` read-path tests;
 - Byzantine/outlier rejection;
 - failure injection and explicit quorum-failure assertions;
 - p50/p95/p99 NKN RTT measurement;

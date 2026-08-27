@@ -47,7 +47,7 @@ jobs:
           NKN_CONNECT_ATTEMPTS: 1
         run: |
           set -o pipefail
-          npm run integration:market | tee nkn-attested-market-report.log
+          timeout 90s npm run integration:market | tee nkn-attested-market-report.log
 
       - name: Warm parallel NKN latency benchmark
         env:
@@ -69,6 +69,7 @@ jobs:
           NKN_INTEGRATION_ROUNDS: 6
           NKN_RTT_SAMPLES: 20
           NKN_RESPONSE_TIMEOUT_MS: 7000
+          NKN_OBSERVATION_RPC_TIMEOUT_MS: 3000
           NKN_MAX_OBSERVATION_AGE_MS: 10000
         run: |
           set -o pipefail
