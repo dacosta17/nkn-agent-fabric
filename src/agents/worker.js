@@ -3,14 +3,31 @@ import { createResponse, parseEnvelope, BoundedTtlSet } from '../lib/runtime.js'
 import { validateObservation } from '../lib/tasks.js';
 import { digest } from '../lib/canonical.js';
 import { createIdentity, createIdentityBindingProof, signManifest } from '../lib/agent-trust.js';
+import { loadOrCreatePersistentIdentity } from '../lib/persistent-identity.js';
 
 const source = process.env.SOURCE ?? 'coingecko';
 const providerId = process.env.PROVIDER_ID ?? source;
 const sourceGroup = process.env.SOURCE_GROUP ?? source;
 const operatorId = process.env.OPERATOR_ID;
 if (!operatorId) throw new Error('OPERATOR_ID is required; operator identity is a security input');
-const identity = createIdentity();
-const transport = await createNknTransport({ identifier: `${source}-${process.pid}` });
+
+const identityFilePath = process.env.OPERATOR_IDENTITY_FILE;
+const identityPassphrase = process.env.OPERATOR_IDENTITY_PASSPHRASE;
+if ((identityFilePath && !identityPassphrase) || (!identityFilePath && identityPassphrase)) {
+  throw new Error('OPERATOR_IDENTITY_FILE and OPERATOR_IDENTITY_PASSPHRASE must be provided together');
+}
+
+const persistentIdentity = identityFilePath
+  ? loadOrCreatePersistentIdentity({ filePath: identityFilePath, passphrase: identityPassphrase })
+  : null;
+const identity = persistentIdentity?.identity ?? createIdentity();
+const transportIdentifier = persistentIdentity
+  ? `${source}-${persistentIdentity.operatorFingerprint.slice(0, 16)}`
+  : `${source}-${process.pid}`;
+const transport = await createNknTransport({
+  identifier: transportIdentifier,
+  ...(persistentIdentity ? { seed: persistentIdentity.nknSeed } : {}),
+});
 const manifest = signManifest({ nknAddress: transport.addr, identity, capabilities: ['market-observation'] });
 const seen = new BoundedTtlSet();
 
@@ -52,4 +69,4 @@ transport.onMessage(async ({ src, payload }) => {
 });
 
 await new Promise((resolve) => transport.onConnect(resolve));
-console.log(JSON.stringify({ role: 'worker', source, providerId, sourceGroup, operatorId, address: transport.addr, manifest }));
+console.log(JSON.stringify({ role: 'worker', source, providerId, sourceGroup, operatorId, address: transport.addr, operatorFingerprint: persistentIdentity?.operatorFingerprint ?? null, persistentIdentity: Boolean(persistentIdentity), manifest }));
