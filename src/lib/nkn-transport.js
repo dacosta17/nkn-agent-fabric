@@ -10,6 +10,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function createNknTransport({
   identifier,
+  seed,
   numSubClients = 2,
   connectTimeoutMs = 45_000,
   connectAttempts = Number(process.env.NKN_CONNECT_ATTEMPTS ?? DEFAULT_CONNECT_ATTEMPTS),
@@ -25,6 +26,7 @@ export async function createNknTransport({
     let client;
     try {
       client = new nkn.MultiClient({
+        ...(seed ? { seed } : {}),
         identifier,
         numSubClients,
         originalClient: false,
