@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { createNknTransport } from '../lib/nkn-transport.js';
 import { createRequest, createResponse, parseEnvelope, BoundedTtlSet } from '../lib/runtime.js';
-import { decodeRpcReply } from './nkn-rpc-decode.js';
+import { decodeRpcReply, rpcPayload } from './nkn-rpc-decode.js';
 
 const SYMBOL = 'NKNUSDT';
 const ROUNDS = Number(process.env.NKN_INTEGRATION_ROUNDS ?? 6);
@@ -155,14 +155,13 @@ async function centralHttpBaseline(sampleCount) {
 }
 
 async function collectRoundObservations(coordinator, activeWorkers, round) {
-  // Bound every observation RPC independently. A Byzantine/unreachable worker must not
-  // hold the entire round open long enough to make honest observations stale.
   const results = await Promise.all(activeWorkers.map(async (worker) => {
     try {
       const response = await rpcWithTimeout(coordinator, worker.transport.addr, { type: 'price-observation.v1', symbol: SYMBOL, round }, OBSERVATION_RPC_TIMEOUT_MS);
-      const result = response.reply?.payload?.result;
-      const evidence = response.reply?.payload?.evidence;
-      if (!result || !evidence) throw new Error(response.reply?.error ?? 'missing result/evidence');
+      const payload = rpcPayload(response.reply);
+      const result = payload?.result;
+      const evidence = payload?.evidence;
+      if (!result || !evidence) throw new Error('missing result/evidence');
       if (digest(result) !== evidence.digest) throw new Error('evidence digest mismatch');
       return { ...result, evidence, elapsed: response.elapsed };
     } catch (error) {
@@ -179,7 +178,7 @@ async function main() {
   try {
     console.log(JSON.stringify({ phase: 'ready', coordinator: coordinator.addr, workers: workers.map((w) => ({ source: w.source, address: w.transport.addr })) }));
     const first = await rpc(coordinator, workers[0].transport.addr, { type: 'ping.v1' });
-    assert.equal(first.reply?.payload?.result?.ok, true);
+    assert.equal(rpcPayload(first.reply)?.result?.ok, true);
     metrics.protocol.packet = true;
     metrics.protocol.session = await sessionSmokeTest(coordinator, workers[0]);
     const workerBySource = new Map(workers.map((w) => [w.source, w]));
@@ -197,7 +196,6 @@ async function main() {
         if (!adversaryObservation?.error && Number.isFinite(adversaryObservation?.price)) {
           assert.ok(decision.outliers.includes('adversary'), `adversary should be rejected in round ${round}`);
         }
-        // Rejection includes an unreachable/invalid Byzantine source: it is excluded from quorum.
         metrics.resilience.adversaryRejected = true;
       }
       if (round === 3) await workerBySource.get('adversary').transport.close();

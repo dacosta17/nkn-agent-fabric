@@ -5,22 +5,39 @@ function toText(value) {
   return String(value);
 }
 
-export function decodeRpcReply(reply) {
-  if (reply === null || reply === undefined) return reply;
+function unwrapTransportEnvelope(value) {
+  if (value === null || value === undefined) return value;
+  if (Buffer.isBuffer(value) || value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return value;
+  if (typeof value !== 'object') return value;
 
-  if (reply && typeof reply === 'object' && !ArrayBuffer.isView(reply) && !(reply instanceof ArrayBuffer)) {
-    // Different nkn-sdk-js versions/runtime adapters can wrap ReplyData.
-    // Normalize the common `{data: ...}` / `{reply: ...}` wrappers before
-    // exposing the protocol envelope to the integration test.
-    if ('data' in reply && Object.keys(reply).length <= 3) return decodeRpcReply(reply.data);
-    if ('reply' in reply && Object.keys(reply).length <= 3) return decodeRpcReply(reply.reply);
-    return reply;
+  const keys = Object.keys(value);
+  if (keys.length === 1 && keys[0] === 'data') return unwrapTransportEnvelope(value.data);
+  if (keys.length === 1 && keys[0] === 'reply') return unwrapTransportEnvelope(value.reply);
+  if (keys.length === 1 && keys[0] === 'payload') return unwrapTransportEnvelope(value.payload);
+  return value;
+}
+
+export function decodeRpcReply(reply) {
+  const unwrapped = unwrapTransportEnvelope(reply);
+  if (unwrapped === null || unwrapped === undefined) return unwrapped;
+
+  if (unwrapped && typeof unwrapped === 'object'
+    && !ArrayBuffer.isView(unwrapped)
+    && !(unwrapped instanceof ArrayBuffer)
+    && !Buffer.isBuffer(unwrapped)) {
+    return unwrapped;
   }
 
-  const text = toText(reply);
+  const text = toText(unwrapped);
   try {
     return JSON.parse(text);
   } catch (error) {
     throw new Error(`invalid NKN RPC response: ${error.message}`);
   }
+}
+
+export function rpcPayload(reply) {
+  const decoded = decodeRpcReply(reply);
+  if (!decoded || typeof decoded !== 'object') return undefined;
+  return decoded.payload ?? decoded.data?.payload ?? decoded.reply?.payload ?? decoded;
 }
