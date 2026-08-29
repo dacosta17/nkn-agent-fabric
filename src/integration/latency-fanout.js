@@ -81,6 +81,14 @@ async function createBenchmarkTopology() {
   return { coordinator: transports[0], workers: transports.slice(1) };
 }
 
+async function verifyWarmup(addresses, coordinator, payload) {
+  const results = await settleAll(addresses, (address) => rpc(coordinator, address, payload));
+  const failedWarmup = results.find((result) => !result.ok);
+  if (failedWarmup) {
+    throw new Error(`NKN warmup unavailable: ${failedWarmup.error ?? 'request failed'}`);
+  }
+}
+
 async function main() {
   let coordinator;
   let workers = [];
@@ -99,15 +107,12 @@ async function main() {
     const addresses = workers.map((worker) => worker.addr);
     const payload = { type: 'latency-ping.v1', bytes: 'x'.repeat(Math.max(0, PAYLOAD_BYTES)) };
 
-    // Warmup is also the availability gate. The previous implementation ignored
-    // warmup failures and continued into 20 serial + 20 parallel samples, causing
-    // an unavailable NKN network to burn the CI timeout one request at a time.
-    for (let i = 0; i < WARMUP; i += 1) {
-      const warmupResults = await settleAll(addresses, (address) => rpc(coordinator, address, payload));
-      const failedWarmup = warmupResults.find((result) => !result.ok);
-      if (failedWarmup) {
-        throw new Error(`NKN warmup unavailable: ${failedWarmup.error ?? 'request failed'}`);
-      }
+    // The first warmup is an availability gate. If NKN is unreachable, stop here.
+    // This prevents an external dependency outage from being amplified into dozens
+    // of timeout cycles while still retaining multiple warmup samples when healthy.
+    await verifyWarmup(addresses, coordinator, payload);
+    for (let i = 1; i < WARMUP; i += 1) {
+      await verifyWarmup(addresses, coordinator, payload);
     }
 
     const serial = [];
