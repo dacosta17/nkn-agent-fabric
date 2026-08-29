@@ -91,6 +91,12 @@ task  result      NKN endpoint
  independently verifiable paid execution
 ```
 
+Run the deterministic economic-boundary demo with:
+
+```bash
+npm run demo:economic-receipt
+```
+
 See [`docs/ECONOMIC_RECEIPTS.md`](docs/ECONOMIC_RECEIPTS.md).
 
 ## Reference protocol v1
