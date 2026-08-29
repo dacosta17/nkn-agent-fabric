@@ -4,7 +4,7 @@ import { decodeRpcReply, rpcPayload } from './nkn-rpc-decode.js';
 
 test('normalizes direct protocol envelope', () => {
   const reply = { payload: { result: { ok: true } } };
-  assert.deepEqual(decodeRpcReply(reply), reply);
+  assert.deepEqual(decodeRpcReply(reply), { result: { ok: true } });
   assert.deepEqual(rpcPayload(reply), { result: { ok: true } });
 });
 
