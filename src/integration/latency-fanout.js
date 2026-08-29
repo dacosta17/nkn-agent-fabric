@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { randomUUID } from 'node:crypto';
+import { writeSync } from 'node:fs';
 import { createNknTransport } from '../lib/nkn-transport.js';
 import { createRequest, createResponse, parseEnvelope } from '../lib/runtime.js';
 import { percentile, settleAll, summarizeSamples, validateLatencyConfig, withTimeout } from '../lib/latency-benchmark.js';
@@ -11,6 +12,7 @@ const PAYLOAD_BYTES = Number(process.env.NKN_LATENCY_PAYLOAD_BYTES ?? 256);
 const REQUEST_TIMEOUT_MS = Number(process.env.NKN_LATENCY_REQUEST_TIMEOUT_MS ?? 12_000);
 const CONNECT_TIMEOUT_MS = Number(process.env.NKN_LATENCY_CONNECT_TIMEOUT_MS ?? 45_000);
 const CONNECT_ATTEMPTS = Number(process.env.NKN_LATENCY_CONNECT_ATTEMPTS ?? 3);
+const HARD_TIMEOUT_MS = Number(process.env.NKN_LATENCY_HARD_TIMEOUT_MS ?? 15_000);
 const MIN_SUCCESS_RATE_PCT = Number(process.env.NKN_LATENCY_MIN_SUCCESS_RATE_PCT ?? 80);
 const ALLOW_UNAVAILABLE = process.env.NKN_LATENCY_ALLOW_UNAVAILABLE === 'true';
 
@@ -18,6 +20,32 @@ validateLatencyConfig({ samples: SAMPLES, warmup: WARMUP, fanout: FANOUT, payloa
 if (!Number.isFinite(MIN_SUCCESS_RATE_PCT) || MIN_SUCCESS_RATE_PCT <= 0 || MIN_SUCCESS_RATE_PCT > 100) throw new RangeError('MIN_SUCCESS_RATE_PCT must be > 0 and <= 100');
 if (!Number.isFinite(CONNECT_TIMEOUT_MS) || CONNECT_TIMEOUT_MS <= 0) throw new RangeError('CONNECT_TIMEOUT_MS must be > 0');
 if (!Number.isInteger(CONNECT_ATTEMPTS) || CONNECT_ATTEMPTS < 1) throw new RangeError('CONNECT_ATTEMPTS must be an integer >= 1');
+if (!Number.isInteger(HARD_TIMEOUT_MS) || HARD_TIMEOUT_MS <= 0) throw new RangeError('HARD_TIMEOUT_MS must be an integer > 0');
+
+function hardTimeout(task, timeoutMs, label) {
+  const operation = Promise.resolve().then(task);
+  operation.catch(() => {});
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function exitUnavailable(status, reason) {
+  const report = JSON.stringify({ phase: 'latency-benchmark', status, reason }, null, 2) + '\n';
+  writeSync(1, report);
+  process.exit(status === 'unavailable' ? 0 : 1);
+}
 
 async function rpc(client, address, payload) {
   const request = createRequest({ requestId: randomUUID(), sender: client.addr, recipient: address, task: payload });
@@ -92,9 +120,14 @@ async function verifyWarmup(addresses, coordinator, payload) {
 async function main() {
   let coordinator;
   let workers = [];
+  let hardTimeoutTriggered = false;
 
   try {
-    ({ coordinator, workers } = await createBenchmarkTopology());
+    ({ coordinator, workers } = await hardTimeout(
+      createBenchmarkTopology,
+      HARD_TIMEOUT_MS,
+      'NKN benchmark topology',
+    ));
 
     workers.forEach((transport) => {
       transport.onMessage(async ({ src, payload }) => {
@@ -143,6 +176,7 @@ async function main() {
       requestTimeoutMs: REQUEST_TIMEOUT_MS,
       connectTimeoutMs: CONNECT_TIMEOUT_MS,
       connectAttempts: CONNECT_ATTEMPTS,
+      hardTimeoutMs: HARD_TIMEOUT_MS,
       minSuccessRatePct: MIN_SUCCESS_RATE_PCT,
       serial: serialReport,
       parallel: parallelReport,
@@ -152,11 +186,14 @@ async function main() {
     console.log(JSON.stringify({ phase: 'latency-benchmark', report }, null, 2));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!ALLOW_UNAVAILABLE) throw error;
-    console.log(JSON.stringify({ phase: 'latency-benchmark', status: 'unavailable', reason: message }, null, 2));
+    hardTimeoutTriggered = /timed out after \d+ms$/.test(message);
+    if (!ALLOW_UNAVAILABLE) exitUnavailable('failed', message);
+    exitUnavailable('unavailable', hardTimeoutTriggered ? `external NKN dependency unavailable: ${message}` : message);
   } finally {
-    await closeTransports(workers);
-    if (coordinator) await Promise.resolve(coordinator.close()).catch(() => {});
+    if (!hardTimeoutTriggered) {
+      await closeTransports(workers);
+      if (coordinator) await Promise.resolve(coordinator.close()).catch(() => {});
+    }
   }
 }
 
