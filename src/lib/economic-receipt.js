@@ -34,6 +34,10 @@ function digest(value) {
   return createHash('sha256').update(canonical(value)).digest('hex');
 }
 
+function normalizePublicKey(key) {
+  return key?.type === 'public' ? key : createPublicKey(key);
+}
+
 export function receiptPayload(receipt) {
   const payload = { ...receipt };
   delete payload.signature;
@@ -88,7 +92,7 @@ export function verifyEconomicReceipt(receipt, publicKey, {
   if (expectedPaymentReference && receipt.paymentReference !== expectedPaymentReference) return { valid: false, reason: 'payment-reference-mismatch' };
 
   try {
-    const cryptographicallyValid = verify(null, Buffer.from(canonical(receiptPayload(receipt))), createPublicKey(publicKey), Buffer.from(receipt.signature, 'base64url'));
+    const cryptographicallyValid = verify(null, Buffer.from(canonical(receiptPayload(receipt))), normalizePublicKey(publicKey), Buffer.from(receipt.signature, 'base64url'));
     if (!cryptographicallyValid) return { valid: false, reason: 'invalid-signature' };
   } catch {
     return { valid: false, reason: 'invalid-signature' };
