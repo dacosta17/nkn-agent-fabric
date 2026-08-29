@@ -5,8 +5,29 @@ const DEFAULT_CONNECT_BACKOFF_MS = 1500;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 7000;
 const DEFAULT_OPERATION_ATTEMPTS = 3;
 const DEFAULT_OPERATION_BACKOFF_MS = 1000;
+const DEFAULT_CLOSE_TIMEOUT_MS = 5000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function validatePositiveNumber(value, name) {
+  if (!Number.isFinite(value) || value <= 0) throw new RangeError(`${name} must be > 0`);
+}
+
+async function closeClient(client, timeoutMs = DEFAULT_CLOSE_TIMEOUT_MS) {
+  if (!client?.close) return;
+  let timer;
+  try {
+    await Promise.race([
+      Promise.resolve().then(() => client.close()),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export async function createNknTransport({
   identifier,
@@ -18,8 +39,17 @@ export async function createNknTransport({
   operationAttempts = Number(process.env.NKN_OPERATION_ATTEMPTS ?? DEFAULT_OPERATION_ATTEMPTS),
   operationBackoffMs = Number(process.env.NKN_OPERATION_BACKOFF_MS ?? DEFAULT_OPERATION_BACKOFF_MS),
   responseTimeoutMs = Number(process.env.NKN_RESPONSE_TIMEOUT_MS ?? DEFAULT_RESPONSE_TIMEOUT_MS),
+  closeTimeoutMs = Number(process.env.NKN_CLOSE_TIMEOUT_MS ?? DEFAULT_CLOSE_TIMEOUT_MS),
   rpcServerAddr = process.env.NKN_RPC_SERVER_ADDR,
 } = {}) {
+  validatePositiveNumber(connectTimeoutMs, 'connectTimeoutMs');
+  validatePositiveNumber(connectBackoffMs, 'connectBackoffMs');
+  validatePositiveNumber(operationBackoffMs, 'operationBackoffMs');
+  validatePositiveNumber(responseTimeoutMs, 'responseTimeoutMs');
+  validatePositiveNumber(closeTimeoutMs, 'closeTimeoutMs');
+  if (!Number.isInteger(connectAttempts) || connectAttempts < 1) throw new RangeError('connectAttempts must be an integer >= 1');
+  if (!Number.isInteger(operationAttempts) || operationAttempts < 1) throw new RangeError('operationAttempts must be an integer >= 1');
+
   let lastError;
 
   for (let attempt = 1; attempt <= connectAttempts; attempt += 1) {
@@ -31,6 +61,7 @@ export async function createNknTransport({
         numSubClients,
         originalClient: false,
         responseTimeout: responseTimeoutMs,
+        connectTimeout: connectTimeoutMs,
         reconnectIntervalMin: 1000,
         reconnectIntervalMax: 10000,
         ...(rpcServerAddr ? { rpcServerAddr } : {}),
@@ -45,7 +76,6 @@ export async function createNknTransport({
           fn(value);
         };
         const timeout = setTimeout(() => {
-          void client.close();
           finish(reject, new Error(`NKN connect timeout after ${connectTimeoutMs}ms`));
         }, connectTimeoutMs);
 
@@ -84,7 +114,7 @@ export async function createNknTransport({
       return client;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      if (client) await Promise.resolve(client.close()).catch(() => {});
+      if (client) await closeClient(client, closeTimeoutMs);
       if (attempt < connectAttempts) await sleep(connectBackoffMs * (2 ** (attempt - 1)));
     }
   }
