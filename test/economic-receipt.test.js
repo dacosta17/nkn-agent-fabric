@@ -18,7 +18,7 @@ const base = {
   taskDigest: 'task-sha256',
   resultDigest: 'result-sha256',
   nknAddress: '2c-example.nkn',
-  issuedAt: 1_750_000_000_000,
+  issuedAt: Date.now(),
   nonce: '01J9-ECO-RECEIPT',
 };
 
