@@ -1,12 +1,23 @@
+function toText(value) {
+  if (Buffer.isBuffer(value)) return value.toString('utf8');
+  if (value instanceof ArrayBuffer) return Buffer.from(value).toString('utf8');
+  if (ArrayBuffer.isView(value)) return Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('utf8');
+  return String(value);
+}
+
 export function decodeRpcReply(reply) {
-  if (reply && typeof reply === 'object' && !ArrayBuffer.isView(reply) && !(reply instanceof ArrayBuffer)) return reply;
-  const text = Buffer.isBuffer(reply)
-    ? reply.toString('utf8')
-    : reply instanceof ArrayBuffer
-      ? Buffer.from(reply).toString('utf8')
-      : ArrayBuffer.isView(reply)
-        ? Buffer.from(reply.buffer, reply.byteOffset, reply.byteLength).toString('utf8')
-        : String(reply);
+  if (reply === null || reply === undefined) return reply;
+
+  if (reply && typeof reply === 'object' && !ArrayBuffer.isView(reply) && !(reply instanceof ArrayBuffer)) {
+    // Different nkn-sdk-js versions/runtime adapters can wrap ReplyData.
+    // Normalize the common `{data: ...}` / `{reply: ...}` wrappers before
+    // exposing the protocol envelope to the integration test.
+    if ('data' in reply && Object.keys(reply).length <= 3) return decodeRpcReply(reply.data);
+    if ('reply' in reply && Object.keys(reply).length <= 3) return decodeRpcReply(reply.reply);
+    return reply;
+  }
+
+  const text = toText(reply);
   try {
     return JSON.parse(text);
   } catch (error) {
