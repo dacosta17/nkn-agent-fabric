@@ -61,6 +61,7 @@ export async function createNknTransport({
         numSubClients,
         originalClient: false,
         responseTimeout: responseTimeoutMs,
+        connectTimeout: connectTimeoutMs,
         reconnectIntervalMin: 1000,
         reconnectIntervalMax: 10000,
         ...(rpcServerAddr ? { rpcServerAddr } : {}),
