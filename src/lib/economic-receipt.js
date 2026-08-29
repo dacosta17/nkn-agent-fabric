@@ -6,17 +6,15 @@ import {
 } from 'node:crypto';
 
 const VERSION = 'economic-receipt-v1';
-const REQUIRED = [
+const STRING_FIELDS = [
   'paymentNetwork',
   'paymentReference',
   'payer',
   'payee',
   'asset',
-  'amount',
   'taskDigest',
   'resultDigest',
   'nknAddress',
-  'issuedAt',
   'nonce',
 ];
 
@@ -47,7 +45,7 @@ export function receiptDigest(receipt) {
 }
 
 export function createEconomicReceipt(input, privateKey) {
-  for (const field of REQUIRED) assertString(String(input[field] ?? ''), field);
+  for (const field of STRING_FIELDS) assertString(input[field], field);
   if (!Number.isSafeInteger(input.amount) || input.amount <= 0) throw new TypeError('amount must be a positive integer in atomic units');
   if (!Number.isSafeInteger(input.issuedAt) || input.issuedAt <= 0) throw new TypeError('issuedAt must be a positive Unix timestamp in milliseconds');
 
@@ -79,7 +77,7 @@ export function verifyEconomicReceipt(receipt, publicKey, {
   expectedPaymentReference,
 } = {}) {
   if (!receipt || receipt.version !== VERSION || typeof receipt.signature !== 'string') return { valid: false, reason: 'invalid-format' };
-  for (const field of REQUIRED) if (typeof receipt[field] !== 'string' || receipt[field].length === 0) return { valid: false, reason: `missing-${field}` };
+  for (const field of STRING_FIELDS) if (typeof receipt[field] !== 'string' || receipt[field].length === 0) return { valid: false, reason: `missing-${field}` };
   if (!Number.isSafeInteger(receipt.amount) || receipt.amount <= 0) return { valid: false, reason: 'invalid-amount' };
   if (!Number.isSafeInteger(receipt.issuedAt)) return { valid: false, reason: 'invalid-issued-at' };
   if (receipt.issuedAt > now + 30_000) return { valid: false, reason: 'future-issued-at' };
@@ -89,13 +87,12 @@ export function verifyEconomicReceipt(receipt, publicKey, {
   if (expectedNknAddress && receipt.nknAddress !== expectedNknAddress) return { valid: false, reason: 'nkn-address-mismatch' };
   if (expectedPaymentReference && receipt.paymentReference !== expectedPaymentReference) return { valid: false, reason: 'payment-reference-mismatch' };
 
-  let cryptographicallyValid = false;
   try {
-    cryptographicallyValid = verify(null, Buffer.from(canonical(receiptPayload(receipt))), createPublicKey(publicKey), Buffer.from(receipt.signature, 'base64url'));
+    const cryptographicallyValid = verify(null, Buffer.from(canonical(receiptPayload(receipt))), createPublicKey(publicKey), Buffer.from(receipt.signature, 'base64url'));
+    if (!cryptographicallyValid) return { valid: false, reason: 'invalid-signature' };
   } catch {
     return { valid: false, reason: 'invalid-signature' };
   }
-  if (!cryptographicallyValid) return { valid: false, reason: 'invalid-signature' };
   return { valid: true, digest: receiptDigest(receipt) };
 }
 
