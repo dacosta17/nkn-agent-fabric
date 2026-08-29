@@ -1,24 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeRpcReply, rpcResult } from './nkn-rpc-decode.js';
+import { decodeRpcReply, rpcPayload } from './nkn-rpc-decode.js';
 
 test('normalizes direct protocol envelope', () => {
-  const reply = { result: { ok: true } };
+  const reply = { payload: { result: { ok: true } } };
   assert.deepEqual(decodeRpcReply(reply), reply);
-  assert.deepEqual(rpcResult(reply), { ok: true });
+  assert.deepEqual(rpcPayload(reply), { result: { ok: true } });
 });
 
 test('normalizes sdk data wrapper', () => {
-  assert.deepEqual(rpcResult({ data: { result: { ok: true } } }), { ok: true });
+  assert.deepEqual(rpcPayload({ data: { payload: { result: { ok: true } } } }), { result: { ok: true } });
 });
 
 test('normalizes sdk reply wrapper', () => {
-  assert.deepEqual(rpcResult({ reply: { payload: { result: { ok: true } } } }), { ok: true });
+  assert.deepEqual(rpcPayload({ reply: { payload: { result: { ok: true } } } }), { result: { ok: true } });
 });
 
 test('normalizes byte encoded JSON', () => {
-  const encoded = Buffer.from(JSON.stringify({ result: { ok: true } }));
-  assert.deepEqual(rpcResult(encoded), { ok: true });
+  const encoded = Buffer.from(JSON.stringify({ payload: { result: { ok: true } } }));
+  assert.deepEqual(rpcPayload(encoded), { result: { ok: true } });
 });
 
 test('does not unwrap arbitrary application objects', () => {
