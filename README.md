@@ -69,6 +69,30 @@ For EVM registries, the adapter can also read `tokenURI(agentId)` and `ownerOf(a
 
 See [`docs/EXTERNAL_AGENT_INTEROP.md`](docs/EXTERNAL_AGENT_INTEROP.md).
 
+## Economic execution receipts
+
+`src/lib/economic-receipt.js` adds an adapter-agnostic economic binding layer: a signed receipt can bind an external payment reference to the exact task digest, result digest and NKN endpoint that delivered the service.
+
+This is deliberately **not a payment implementation**. A settlement adapter must independently verify the payment reference before issuing the receipt. The protocol then makes the economic event portable and independently verifiable by downstream agents.
+
+```text
+payment / settlement
+        │
+ settlement adapter
+        │ verified reference
+        ▼
+ signed economic receipt
+   ┌────┼───────────┐
+   ▼    ▼           ▼
+task  result      NKN endpoint
+ digest digest       │
+   └────┬────────────┘
+        ▼
+ independently verifiable paid execution
+```
+
+See [`docs/ECONOMIC_RECEIPTS.md`](docs/ECONOMIC_RECEIPTS.md).
+
 ## Reference protocol v1
 
 The project freezes a transport-agnostic protocol core alongside the NKN adapters:
@@ -103,6 +127,7 @@ All five domains reuse the same capability, quote, attestation, provenance, fres
 - NKN session-mode smoke path;
 - signed capability manifests bound to NKN addresses;
 - signed task quotes and execution attestations;
+- economic receipts binding payment references to task/result/NKN evidence;
 - SHA-256 task/result evidence digests;
 - freshness and bounded replay protection;
 - independent-provider and operator-diversity checks;
