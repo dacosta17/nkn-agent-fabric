@@ -1,0 +1,32 @@
+name: Crypto Earning Opportunity Scan
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Scan earning opportunities
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node src/opportunities/earning-scan.js
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: earning-opportunities
+          path: earning-opportunities.json
