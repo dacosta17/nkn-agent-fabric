@@ -25,6 +25,7 @@
     "benchmark:nkn": "node src/agents/benchmark-nkn.js",
     "benchmark:central": "node src/agents/benchmark-central.js",
     "benchmark:nkn:fanout": "node src/integration/latency-fanout.js",
+    "opportunities:scan": "node src/opportunities/earning-scan.js",
     "test:go": "go test ./..."
   },
   "dependencies": {"nkn-sdk": "1.3.6"}
